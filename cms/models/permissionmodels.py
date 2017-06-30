@@ -8,6 +8,7 @@ from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.utils.encoding import force_text, python_2_unicode_compatible
 from django.utils.translation import ugettext_lazy as _
 
+from cms.multidb import RoutingForeignKey
 from cms.models import Page
 from cms.models.managers import (PagePermissionManager,
                                  GlobalPagePermissionManager)
@@ -55,8 +56,8 @@ class AbstractPagePermission(models.Model):
     """
 
     # who:
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, verbose_name=_("user"), blank=True, null=True)
-    group = models.ForeignKey(Group, verbose_name=_("group"), blank=True, null=True)
+    user = RoutingForeignKey(settings.AUTH_USER_MODEL, verbose_name=_("user"), blank=True, null=True)
+    group = RoutingForeignKey(Group, verbose_name=_("group"), blank=True, null=True)
 
     # what:
     can_change = models.BooleanField(_("can edit"), default=True)
@@ -248,7 +249,7 @@ class PageUserManager(UserManager):
 class PageUser(User):
     """Cms specific user data, required for permission system
     """
-    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="created_users")
+    created_by = RoutingForeignKey(settings.AUTH_USER_MODEL, related_name="created_users")
 
     objects = PageUserManager()
 
@@ -261,7 +262,7 @@ class PageUser(User):
 class PageUserGroup(Group):
     """Cms specific group data, required for permission system
     """
-    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="created_usergroups")
+    created_by = RoutingForeignKey(settings.AUTH_USER_MODEL, related_name="created_usergroups")
 
     class Meta:
         verbose_name = _('User group (page)')
