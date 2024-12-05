@@ -86,8 +86,10 @@ class PageSmartLinkField(forms.CharField):
                  ajax_view=None, *args, **kwargs):
         self.placeholder_text = placeholder_text
         widget = self.widget(ajax_view=ajax_view)
-        super(PageSmartLinkField, self).__init__(max_length, min_length,
-                                                 widget=widget, *args, **kwargs)
+        kwargs['max_length'] = max_length
+        kwargs['min_length'] = min_length
+        kwargs['widget'] = widget
+        super(PageSmartLinkField, self).__init__(*args, **kwargs)
 
     def widget_attrs(self, widget):
         attrs = super(PageSmartLinkField, self).widget_attrs(widget)
