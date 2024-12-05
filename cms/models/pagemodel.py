@@ -58,7 +58,7 @@ class Page(six.with_metaclass(PageMetaClass, MP_Node)):
     changed_by = models.CharField(
         _("changed by"), max_length=constants.PAGE_USERNAME_MAX_LENGTH,
         editable=False)
-    parent = models.ForeignKey('self', null=True, blank=True, related_name='children', db_index=True)
+    parent = models.ForeignKey('self', null=True, blank=True, related_name='children', db_index=True, on_delete=models.SET_NULL)
     creation_date = models.DateTimeField(auto_now_add=True)
     changed_date = models.DateTimeField(auto_now=True)
 
@@ -81,7 +81,7 @@ class Page(six.with_metaclass(PageMetaClass, MP_Node)):
                                 help_text=_('The template used to render the content.'),
                                 default=TEMPLATE_DEFAULT)
     site = models.ForeignKey(Site, help_text=_('The site the page is accessible at.'), verbose_name=_("site"),
-                             related_name='djangocms_pages')
+                             related_name='djangocms_pages', on_delete=models.SET_NULL)
 
     login_required = models.BooleanField(_("login required"), default=False)
     limit_visibility_in_menu = models.SmallIntegerField(_("menu visibility"), default=None, null=True, blank=True,

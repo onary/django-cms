@@ -34,14 +34,14 @@ class StaticPlaceholder(models.Model):
     code = models.CharField(
         verbose_name=_(u'placeholder code'), max_length=255, blank=True,
         help_text=_(u'To render the static placeholder in templates.'))
-    draft = PlaceholderField(static_slotname, verbose_name=_(u'placeholder content'), related_name='static_draft')
-    public = PlaceholderField(static_slotname, editable=False, related_name='static_public')
+    draft = PlaceholderField(static_slotname, verbose_name=_(u'placeholder content'), related_name='static_draft', on_delete=models.CASCADE)
+    public = PlaceholderField(static_slotname, editable=False, related_name='static_public', on_delete=models.CASCADE)
     dirty = models.BooleanField(default=False, editable=False)
     creation_method = models.CharField(
         verbose_name=_('creation_method'), choices=CREATION_METHODS,
         default=CREATION_BY_CODE, max_length=20, blank=True,
     )
-    site = models.ForeignKey(Site, null=True, blank=True)
+    site = models.ForeignKey(Site, null=True, blank=True, on_delete=models.SET_NULL)
 
     class Meta:
         verbose_name = _(u'static placeholder')

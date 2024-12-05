@@ -7,7 +7,7 @@ from cms.models import CMSPlugin
 # @python_2_unicode_compatible
 class Article(models.Model):
     title = models.CharField(max_length=50)
-    section = models.ForeignKey('Section')
+    section = models.ForeignKey('Section', on_delete=models.CASCADE)
 
     def __str__(self):
         return u"%s -- %s" % (self.title, self.section)
@@ -37,7 +37,7 @@ class ArticlePluginModel(CMSPlugin):
 
 
 class FKModel(models.Model):
-    fk_field = models.ForeignKey('PluginModelWithFKFromModel')
+    fk_field = models.ForeignKey('PluginModelWithFKFromModel', on_delete=models.CASCADE)
 
 
 class M2MTargetModel(models.Model):

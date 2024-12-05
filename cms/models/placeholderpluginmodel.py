@@ -10,7 +10,7 @@ from django.db import models
 class PlaceholderReference(CMSPlugin):
     cmsplugin_ptr = models.OneToOneField(CMSPlugin, related_name='cms_placeholderreference', parent_link=True)
     name = models.CharField(max_length=255)
-    placeholder_ref = PlaceholderField(slotname='clipboard')
+    placeholder_ref = PlaceholderField(slotname='clipboard', on_delete=models.CASCADE)
     class Meta:
         app_label = 'cms'
 

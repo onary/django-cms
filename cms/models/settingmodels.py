@@ -11,7 +11,7 @@ class UserSettings(models.Model):
     user = RoutingOneToOneField(settings.AUTH_USER_MODEL, editable=False, related_name='djangocms_usersettings')
     language = models.CharField(_("Language"), max_length=10, choices=settings.LANGUAGES,
                                 help_text=_("The language for the admin interface and toolbar"))
-    clipboard = models.ForeignKey('cms.Placeholder', blank=True, null=True, editable=False)
+    clipboard = models.ForeignKey('cms.Placeholder', blank=True, null=True, editable=False, on_delete=models.SET_NULL)
 
     class Meta:
         verbose_name = _('user setting')

@@ -24,7 +24,7 @@ class Example1(models.Model):
     char_3 = models.CharField(u'char_3', max_length=255)
     char_4 = models.CharField(u'char_4', max_length=255)
     date_field = models.DateField(null=True)
-    placeholder = PlaceholderField('placeholder')
+    placeholder = PlaceholderField('placeholder', on_delete=models.CASCADE)
     publish = models.BooleanField(default=True)
     decimal_field = models.DecimalField(
         max_digits=5, decimal_places=1,
@@ -66,22 +66,22 @@ class TwoPlaceholderExample(models.Model):
     char_2 = models.CharField(u'char_2', max_length=255)
     char_3 = models.CharField(u'char_3', max_length=255)
     char_4 = models.CharField(u'char_4', max_length=255)
-    placeholder_1 = PlaceholderField('placeholder_1', related_name='p1')
-    placeholder_2 = PlaceholderField('placeholder_2', related_name='p2')
+    placeholder_1 = PlaceholderField('placeholder_1', related_name='p1', on_delete=models.CASCADE)
+    placeholder_2 = PlaceholderField('placeholder_2', related_name='p2', on_delete=models.CASCADE)
 
 
 class DynamicPlaceholderSlotExample(models.Model):
     char_1 = models.CharField(u'char_1', max_length=255)
     char_2 = models.CharField(u'char_2', max_length=255)
-    placeholder_1 = PlaceholderField(dynamic_placeholder_1, related_name='dynamic_pl_1')
-    placeholder_2 = PlaceholderField(dynamic_placeholder_2, related_name='dynamic_pl_2')
+    placeholder_1 = PlaceholderField(dynamic_placeholder_1, related_name='dynamic_pl_1', on_delete=models.CASCADE)
+    placeholder_2 = PlaceholderField(dynamic_placeholder_2, related_name='dynamic_pl_2', on_delete=models.CASCADE)
 
 
 # @python_2_unicode_compatible
 class CharPksExample(models.Model):
     char_1 = models.CharField(u'char_1', max_length=255)
     slug = models.SlugField(u'char_1', max_length=255, primary_key=True)
-    placeholder_1 = PlaceholderField('placeholder_1', related_name='charpk_p1')
+    placeholder_1 = PlaceholderField('placeholder_1', related_name='charpk_p1', on_delete=models.CASCADE)
 
     def __str__(self):
         return "%s - %s" % (self.char_1, self.pk)
@@ -93,7 +93,7 @@ class MultilingualExample1(TranslatableModel):
         char_1=models.CharField(u'char_1', max_length=255),
         char_2=models.CharField(u'char_2', max_length=255),
     )
-    placeholder_1 = PlaceholderField('placeholder_1')
+    placeholder_1 = PlaceholderField('placeholder_1', on_delete=models.CASCADE)
 
     def __str__(self):
         return self.char_1

@@ -198,7 +198,7 @@ class PagePermission(AbstractPagePermission):
     """Page permissions for single page
     """
     grant_on = models.IntegerField(_("Grant on"), choices=ACCESS_CHOICES, default=ACCESS_PAGE_AND_DESCENDANTS)
-    page = models.ForeignKey(Page, null=True, blank=True, verbose_name=_("page"))
+    page = models.ForeignKey(Page, null=True, blank=True, verbose_name=_("page"), on_delete=models.SET_NULL)
 
     objects = PagePermissionManager()
 
