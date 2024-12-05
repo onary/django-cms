@@ -81,7 +81,7 @@ class Page(six.with_metaclass(PageMetaClass, MP_Node)):
                                 help_text=_('The template used to render the content.'),
                                 default=TEMPLATE_DEFAULT)
     site = models.ForeignKey(Site, help_text=_('The site the page is accessible at.'), verbose_name=_("site"),
-                             related_name='djangocms_pages', on_delete=models.SET_NULL)
+                             related_name='djangocms_pages', on_delete=models.CASCADE)
 
     login_required = models.BooleanField(_("login required"), default=False)
     limit_visibility_in_menu = models.SmallIntegerField(_("menu visibility"), default=None, null=True, blank=True,
@@ -114,7 +114,7 @@ class Page(six.with_metaclass(PageMetaClass, MP_Node)):
 
     class Meta:
         permissions = (
-            ('view_page', 'Can view page'),
+            # ('view_page', 'Can view page'),
             ('publish_page', 'Can publish page'),
             ('edit_static_placeholder', 'Can edit static placeholders'),
         )
