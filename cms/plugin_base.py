@@ -10,7 +10,7 @@ from django.contrib import messages
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.template.defaultfilters import force_escape
 from django.utils import six
-from django.utils.encoding import force_text, python_2_unicode_compatible, smart_str
+from django.utils.encoding import force_text, smart_str
 from django.utils.translation import ugettext, ugettext_lazy as _
 
 from cms import operations
@@ -88,7 +88,7 @@ class CMSPluginBaseMetaclass(forms.MediaDefiningClass):
         return new_plugin
 
 
-@python_2_unicode_compatible
+# @python_2_unicode_compatible
 class CMSPluginBase(six.with_metaclass(CMSPluginBaseMetaclass, admin.ModelAdmin)):
 
     name = ""

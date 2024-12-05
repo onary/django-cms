@@ -6,7 +6,7 @@ from django.contrib.sites.models import Site
 from django.urls import reverse
 from django.db import models
 from django.utils import six
-from django.utils.encoding import force_text, python_2_unicode_compatible
+from django.utils.encoding import force_text
 from django.utils.timezone import now
 from django.utils.translation import get_language, ugettext_lazy as _
 
@@ -28,7 +28,7 @@ from treebeard.mp_tree import MP_Node
 logger = getLogger(__name__)
 
 
-@python_2_unicode_compatible
+# @python_2_unicode_compatible
 class Page(six.with_metaclass(PageMetaClass, MP_Node)):
     """
     A simple hierarchical page model

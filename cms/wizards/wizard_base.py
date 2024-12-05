@@ -4,7 +4,7 @@ import hashlib
 
 from django.core.exceptions import ImproperlyConfigured
 from django.forms.models import ModelForm
-from django.utils.encoding import python_2_unicode_compatible
+# from django.utils.encoding import python_2_unicode_compatible
 
 from django.utils.translation import (
     override as force_language,
@@ -45,7 +45,7 @@ class WizardBase(object):
             self.template_name = template_name
 
 
-@python_2_unicode_compatible
+# @python_2_unicode_compatible
 class Wizard(WizardBase):
     template_name = 'cms/wizards/create.html'
     _hash_cache = None

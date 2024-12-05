@@ -1,11 +1,11 @@
 from cms.models.fields import PlaceholderField
 from django.urls import reverse
 from django.db import models
-from django.utils.encoding import python_2_unicode_compatible
+# from django.utils.encoding import python_2_unicode_compatible
 from treebeard.mp_tree import MP_Node
 
 
-@python_2_unicode_compatible
+# @python_2_unicode_compatible
 class Category(MP_Node):
     parent = models.ForeignKey('self', blank=True, null=True)
     name = models.CharField(max_length=20)
