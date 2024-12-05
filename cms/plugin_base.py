@@ -2,7 +2,7 @@
 import json
 import re
 
-from django.shortcuts import render_to_response
+from django.template import loader
 
 from django import forms
 from django.contrib import admin
@@ -84,7 +84,8 @@ class CMSPluginBaseMetaclass(forms.MediaDefiningClass):
                 ]
         # Set default name
         if not new_plugin.name:
-            new_plugin.name = re.sub("([a-z])([A-Z])", "\g<1> \g<2>", name)
+            # new_plugin.name = re.sub("([a-z])([A-Z])", "\g<1> \g<2>", name)
+            new_plugin.name = re.sub(r"([a-z])([A-Z])", r"\g<1> \g<2>", name)
         return new_plugin
 
 
@@ -267,9 +268,10 @@ class CMSPluginBase(six.with_metaclass(CMSPluginBaseMetaclass, admin.ModelAdmin)
 
         if extra_context:
             context.update(extra_context)
-        return render_to_response(
-            'admin/cms/page/plugin/confirm_form.html', context
-        )
+
+        template = loader.get_template('admin/cms/page/plugin/confirm_form.html')
+        return template.render(context)
+
 
     def save_model(self, request, obj, form, change):
         """
