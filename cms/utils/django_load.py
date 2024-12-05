@@ -113,10 +113,20 @@ def load_from_file(module_path):
     """
     Load a python module from its absolute filesystem path
     """
-    from imp import load_module, PY_SOURCE
+    # from imp import load_module, PY_SOURCE
+    import importlib.util
 
     imported = None
     if module_path:
-        with open(module_path, 'r') as openfile:
-            imported = load_module("mod", openfile, module_path, ('imported', 'r', PY_SOURCE))
+        # with open(module_path, 'r') as openfile:
+        #     imported = load_module("mod", openfile, module_path, ('imported', 'r', PY_SOURCE))
+        module_name = "imported"
+        spec = importlib.util.spec_from_file_location(module_name, module_path)
+        if spec is None:
+            raise ImportError(f"Cannot find the module at {module_path}")
+
+        # Create and execute the module
+        imported = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(imported)
+        return imported
     return imported

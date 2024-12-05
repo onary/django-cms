@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-from imp import load_module, PY_SOURCE
+# from imp import load_module, PY_SOURCE
+import importlib.util
 import os.path
 
 from django.conf import settings
@@ -40,8 +41,14 @@ class TemplatesConfig(CMSTestCase):
         Test that using CMS_TEMPLATES_DIR both template list and template labels are extracted from the new directory
         """
         config_path = os.path.join(settings.CMS_TEMPLATES_DIR, '__init__.py')
-        with open(config_path, 'r') as openfile:
-            mod = load_module("mod", openfile, config_path, ('m', 'r', PY_SOURCE))
+        # with open(config_path, 'r') as openfile:
+        #     mod = load_module("mod", openfile, config_path, ('m', 'r', PY_SOURCE))
+
+        spec = importlib.util.spec_from_file_location("mod", config_path)
+        mod = importlib.util.module_from_spec(spec)
+        with open(config_path, 'r'):
+            spec.loader.exec_module(mod)
+
         original_labels = [force_str(_(template[1])) for template in mod.TEMPLATES.items()]
         original_files = [os.path.join(PATH_PREFIX, template[0].strip()) for template in mod.TEMPLATES.items()]
         templates = get_cms_setting('TEMPLATES')
