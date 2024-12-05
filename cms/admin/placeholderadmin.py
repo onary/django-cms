@@ -19,7 +19,7 @@ from django.http import (
 from django.shortcuts import get_list_or_404, get_object_or_404, render
 from django.template.response import TemplateResponse
 from django.utils import six
-from django.utils.six.moves.urllib.parse import parse_qsl, urlparse
+from six.moves.urllib.parse import parse_qsl, urlparse
 from django.utils.decorators import method_decorator
 from django.utils.encoding import force_text
 from django.utils import translation

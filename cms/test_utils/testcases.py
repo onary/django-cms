@@ -18,7 +18,7 @@ from django.test.client import RequestFactory
 from django.utils.http import urlencode
 from django.utils.timezone import now
 from django.utils.translation import activate
-from django.utils.six.moves.urllib.parse import unquote, urljoin
+from six.moves.urllib.parse import unquote, urljoin
 from menus.menu_pool import menu_pool
 
 from cms.api import create_page

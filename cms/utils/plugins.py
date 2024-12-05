@@ -4,7 +4,7 @@ from itertools import groupby, starmap
 from operator import attrgetter, itemgetter
 
 from django.utils.encoding import force_text
-from django.utils.six.moves import filter, filterfalse
+from six.moves import filter, filterfalse
 from django.utils.translation import ugettext as _
 
 

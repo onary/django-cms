@@ -13,7 +13,7 @@ import imp
 import traceback # changed
 from importlib import import_module
 
-from django.utils.six.moves import filter, map
+from six.moves import filter, map
 
 from .compat.dj import installed_apps
 

@@ -22,7 +22,7 @@ except ImportError:
 from django.utils import six, timezone
 from django.utils.encoding import force_text, python_2_unicode_compatible
 from django.utils.safestring import mark_safe
-from django.utils.six.moves import filter
+from six.moves import filter
 from django.utils.translation import ugettext_lazy as _
 
 from cms.exceptions import DontUsePageAttributeWarning

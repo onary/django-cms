@@ -5,7 +5,7 @@ import os
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.utils.translation import ugettext_lazy as _
-from django.utils.six.moves.urllib.parse import urljoin
+from six.moves.urllib.parse import urljoin
 
 from cms import constants
 

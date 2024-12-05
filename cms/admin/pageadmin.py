@@ -30,7 +30,7 @@ from django.http import (
 from django.shortcuts import render, get_object_or_404
 from django.template.defaultfilters import escape
 from django.utils.encoding import force_text
-from django.utils.six.moves.urllib.parse import unquote
+from six.moves.urllib.parse import unquote
 from django.utils.translation import ugettext, ugettext_lazy as _, get_language
 from django.utils.decorators import method_decorator
 from django.views.decorators.http import require_POST

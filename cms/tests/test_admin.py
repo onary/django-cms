@@ -15,7 +15,7 @@ from django.http import (Http404, HttpResponseBadRequest, HttpResponseForbidden,
                          QueryDict, HttpResponseNotFound)
 from django.utils.encoding import force_text, smart_str
 from django.utils import timezone
-from django.utils.six.moves.urllib.parse import urlparse
+from six.moves.urllib.parse import urlparse
 
 from cms import api
 from cms.api import create_page, create_title, add_plugin, publish_page

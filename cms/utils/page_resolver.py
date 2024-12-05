@@ -8,7 +8,7 @@ from django.db.models import Q
 from django.utils import timezone
 from django.utils.encoding import force_text
 from django.utils.safestring import mark_safe
-from django.utils.six.moves.urllib.parse import unquote
+from six.moves.urllib.parse import unquote
 from django.utils.translation import ugettext_lazy as _, ungettext_lazy
 
 from cms.models.pagemodel import Page

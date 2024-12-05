@@ -9,7 +9,7 @@ from django.contrib.sites.models import Site
 from django.core import management
 from django.core.management import CommandError
 from django.test.utils import override_settings
-from django.utils.six.moves import StringIO
+from six.moves import StringIO
 
 from cms.api import create_page, add_plugin, create_title
 from cms.management.commands.subcommands.list import plugin_report

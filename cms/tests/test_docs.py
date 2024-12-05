@@ -6,7 +6,7 @@ import os
 import socket
 import sys
 
-from django.utils.six.moves import StringIO
+from six.moves import StringIO
 from sphinx.application import Sphinx, SphinxWarning
 
 try:
