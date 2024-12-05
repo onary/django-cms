@@ -3,7 +3,7 @@ from abc import ABCMeta
 from collections import defaultdict
 
 from django.template.loader import render_to_string
-from django.utils import six
+import six
 from django.utils.encoding import force_text
 from django.utils.functional import Promise
 

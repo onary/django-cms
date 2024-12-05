@@ -5,7 +5,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.conf.urls import url, include
 from django.db.models import signals
 from django.template.defaultfilters import slugify
-from django.utils import six
+import six
 from django.utils.encoding import force_text
 from django.utils.translation import get_language, deactivate_all, activate
 from django.template import TemplateDoesNotExist, TemplateSyntaxError

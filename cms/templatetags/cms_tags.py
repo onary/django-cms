@@ -14,7 +14,7 @@ from django.db.models import Model
 from django.middleware.common import BrokenLinkEmailsMiddleware
 from django.template import Context
 from django.template.loader import render_to_string
-from django.utils import six
+import six
 from django.utils.encoding import smart_text, force_text
 from django.utils.html import escape
 from django.utils.http import urlencode

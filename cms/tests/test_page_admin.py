@@ -8,7 +8,7 @@ from django.forms.models import model_to_dict
 from django.http import HttpRequest
 from django.test.html import HTMLParseError, Parser
 from django.test.utils import override_settings
-from django.utils import six
+import six
 from django.utils.encoding import force_text
 from django.utils.timezone import now as tz_now
 

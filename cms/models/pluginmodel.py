@@ -19,7 +19,8 @@ try:
 except ImportError:
     # Django >= 1.9
     from django.db.models.fields.related import ForwardManyToOneDescriptor
-from django.utils import six, timezone
+import six
+from django.utils import timezone
 from django.utils.encoding import force_text
 from django.utils.safestring import mark_safe
 from six.moves import filter

@@ -9,7 +9,7 @@ from django.contrib import admin
 from django.contrib import messages
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.template.defaultfilters import force_escape
-from django.utils import six
+import six
 from django.utils.encoding import force_text, smart_str
 from django.utils.translation import ugettext, ugettext_lazy as _
 

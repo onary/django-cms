@@ -9,7 +9,7 @@ from django.contrib.sites.models import Site
 from django.core.cache import cache
 from django.urls import clear_url_caches, reverse, resolve, NoReverseMatch
 from django.test.utils import override_settings
-from django.utils import six
+import six
 from django.utils.timezone import now
 
 from cms.admin.forms import AdvancedSettingsForm

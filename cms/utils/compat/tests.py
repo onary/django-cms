@@ -1,4 +1,4 @@
-from django.utils import six
+import six
 
 
 if six.PY3:

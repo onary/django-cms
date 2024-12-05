@@ -10,7 +10,7 @@ from django.template import TemplateSyntaxError, NodeList, Variable, Context, Te
 from django.template.base import VariableNode
 from django.template.loader import get_template
 from django.template.loader_tags import BlockNode, ExtendsNode, IncludeNode
-from django.utils import six
+import six
 
 from sekizai.helpers import get_varname, is_variable_extend_node
 

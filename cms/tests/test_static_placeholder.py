@@ -4,7 +4,7 @@ import json
 from django.contrib.admin.sites import site
 from django.template import Context
 from django.template.base import Template
-from django.utils import six
+import six
 
 from cms.api import add_plugin
 from cms.constants import PLUGIN_MOVE_ACTION

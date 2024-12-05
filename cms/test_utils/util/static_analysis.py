@@ -1,5 +1,5 @@
 import os
-from django.utils import six
+import six
 
 from pyflakes import api
 from pyflakes.checker import Checker

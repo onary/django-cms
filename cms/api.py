@@ -17,7 +17,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.template.defaultfilters import slugify
 from django.template.loader import get_template
-from django.utils import six
+import six
 from django.utils.translation import activate
 
 from cms import constants

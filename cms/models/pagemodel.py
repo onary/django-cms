@@ -5,7 +5,7 @@ from os.path import join
 from django.contrib.sites.models import Site
 from django.urls import reverse
 from django.db import models
-from django.utils import six
+import six
 from django.utils.encoding import force_text
 from django.utils.timezone import now
 from django.utils.translation import get_language, ugettext_lazy as _
