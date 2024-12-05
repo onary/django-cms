@@ -9,7 +9,8 @@ from django.db import models
 from django.template.defaultfilters import title
 import six
 # from django.utils.encoding import python_2_unicode_compatible
-from django.utils.translation import ugettext_lazy as _, force_text
+from django.utils.translation import ugettext_lazy as _
+from django.utils.encoding import force_str
 
 from cms.cache.placeholder import clear_placeholder_cache
 from cms.exceptions import LanguageError
@@ -471,7 +472,7 @@ class Placeholder(models.Model):
                             'ignoring.' % {
                                 'plugin_class': plugin.__class__.__name__,
                                 'pk': instance.pk,
-                                'value': force_text(plugin_expiration),
+                                'value': force_str(plugin_expiration),
                             })
                         continue
                 else:
@@ -489,7 +490,7 @@ class Placeholder(models.Model):
                         'get_cache_expiration(), ignoring.' % {
                             'plugin_class': plugin.__class__.__name__,
                             'pk': instance.pk,
-                            'value': force_text(plugin_expiration),
+                            'value': force_str(plugin_expiration),
                         })
                     continue
 
@@ -586,7 +587,7 @@ class Placeholder(models.Model):
                         'get_vary_cache_on(), ignoring.' % {
                             'plugin_class': plugin.__class__.__name__,
                             'pk': instance.pk,
-                            'value': force_text(vary_on),
+                            'value': force_str(vary_on),
                         })
 
         return sorted(list(vary_list))

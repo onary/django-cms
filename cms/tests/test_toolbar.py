@@ -16,7 +16,7 @@ from django.test.utils import override_settings
 from django.utils.functional import lazy
 from django.utils.html import escape
 from django.utils.translation import ugettext_lazy as _, override
-from django.utils.encoding import force_text
+from django.utils.encoding import force_str
 
 from cms.api import create_page, create_title, add_plugin
 from cms.cms_toolbars import (ADMIN_MENU_IDENTIFIER, ADMINISTRATION_BREAK, get_user_model,
@@ -744,13 +744,13 @@ class ToolbarTests(ToolbarTestBase):
         toolbar = CMSToolbar(request)
         toolbar.populate()
         menu = dict(
-            (force_text(getattr(item, 'name', '|')), item)
+            (force_str(getattr(item, 'name', '|')), item)
             for item in toolbar.get_menu(menu_id).get_items()
         )
         self.assertIn(name, list(menu))
         if items is not None:
             sub_menu = list(
-                force_text(getattr(item, 'name', '|')) for item in menu[name].get_items()
+                force_str(getattr(item, 'name', '|')) for item in menu[name].get_items()
             )
             self.assertEqual(sorted(sub_menu), sorted(items))
 

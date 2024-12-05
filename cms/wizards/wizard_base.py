@@ -8,10 +8,9 @@ from django.forms.models import ModelForm
 
 from django.utils.translation import (
     override as force_language,
-    force_text,
     ugettext as _
 )
-
+from django.utils.encoding import force_str
 from cms.utils import get_cms_setting
 
 
@@ -58,7 +57,7 @@ class Wizard(WizardBase):
         in the form's markup, and we'd rather not expose code paths there.
         """
         if not self._hash_cache:
-            full_path = force_text(
+            full_path = force_str(
                     ".".join([self.__module__, self.__class__.__name__])
                 ).encode('utf-8')
             hash = hashlib.sha1()
@@ -96,7 +95,7 @@ class Wizard(WizardBase):
         return self.title
 
     def __repr__(self):
-        return 'Wizard: "{0}"'.format(force_text(self.title))
+        return 'Wizard: "{0}"'.format(force_str(self.title))
 
     def user_has_add_permission(self, user, **kwargs):
         """

@@ -5,7 +5,7 @@ from django.contrib.auth import get_permission_codename
 from django.contrib.sites.models import Site
 from django.urls import NoReverseMatch, reverse_lazy
 from django.forms.widgets import Select, MultiWidget, TextInput
-from django.utils.encoding import force_text
+from django.utils.encoding import force_str
 from django.utils.html import escape, escapejs
 from django.utils.safestring import mark_safe
 from django.utils.translation import ugettext as _
@@ -63,7 +63,7 @@ class PageSelectWidget(MultiWidget):
             initial_value = u''
         else:
             initial_value = initial
-        if force_text(initial_value) != force_text(data_value):
+        if force_str(initial_value) != force_str(data_value):
             return True
         return False
 
@@ -157,7 +157,7 @@ class PageSmartLinkWidget(TextInput):
             'element_id': id_,
             'placeholder_text': final_attrs.get('placeholder_text', ''),
             'language_code': self.language,
-            'ajax_url': force_text(self.ajax_url)
+            'ajax_url': force_str(self.ajax_url)
         }]
 
         output.append(super(PageSmartLinkWidget, self).render(name, value, attrs))
@@ -202,7 +202,7 @@ class AppHookSelect(Select):
     def render_option(self, selected_choices, option_value, option_label):
         if option_value is None:
             option_value = ''
-        option_value = force_text(option_value)
+        option_value = force_str(option_value)
         if option_value in selected_choices:
             selected_html = mark_safe(' selected="selected"')
             if not self.allow_multiple_selected:
@@ -220,7 +220,7 @@ class AppHookSelect(Select):
             option_value,
             selected_html,
             data_html,
-            force_text(option_label),
+            force_str(option_label),
         )
 
 

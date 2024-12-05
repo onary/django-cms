@@ -6,7 +6,7 @@ from django.contrib.sites.models import Site
 from django.urls import reverse
 from django.db import models
 import six
-from django.utils.encoding import force_text
+from django.utils.encoding import force_str
 from django.utils.timezone import now
 from django.utils.translation import get_language, ugettext_lazy as _
 
@@ -135,7 +135,7 @@ class Page(six.with_metaclass(PageMetaClass, MP_Node)):
                 title = None
         if title is None:
             title = u""
-        return force_text(title)
+        return force_str(title)
 
     def __repr__(self):
         # This is needed to solve the infinite recursion when
@@ -559,7 +559,7 @@ class Page(six.with_metaclass(PageMetaClass, MP_Node)):
 
         if user:
             try:
-                changed_by = force_text(user)
+                changed_by = force_str(user)
             except AttributeError:
                 # AnonymousUser may not have USERNAME_FIELD
                 changed_by = "anonymous"

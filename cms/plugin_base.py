@@ -10,7 +10,7 @@ from django.contrib import messages
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.template.defaultfilters import force_escape
 import six
-from django.utils.encoding import force_text, smart_str
+from django.utils.encoding import force_str, smart_str
 from django.utils.translation import ugettext, ugettext_lazy as _
 
 from cms import operations
@@ -258,7 +258,7 @@ class CMSPluginBase(six.with_metaclass(CMSPluginBaseMetaclass, admin.ModelAdmin)
         context = {
             'plugin': obj,
             'is_popup': True,
-            'name': force_text(obj),
+            'name': force_str(obj),
             "type": obj.get_plugin_name(),
             'plugin_id': obj.pk,
             'icon': force_escape(obj.get_instance_icon_src()),
@@ -321,7 +321,7 @@ class CMSPluginBase(six.with_metaclass(CMSPluginBaseMetaclass, admin.ModelAdmin)
     def response_change(self, request, obj):
         self.object_successfully_changed = True
         opts = self.model._meta
-        msg_dict = {'name': force_text(opts.verbose_name), 'obj': force_text(obj)}
+        msg_dict = {'name': force_str(opts.verbose_name), 'obj': force_str(obj)}
         msg = _('The %(name)s "%(obj)s" was changed successfully.') % msg_dict
         self.message_user(request, msg, messages.SUCCESS)
         return self.render_close_frame(obj)
@@ -350,7 +350,7 @@ class CMSPluginBase(six.with_metaclass(CMSPluginBaseMetaclass, admin.ModelAdmin)
         Return the 'alt' text to be used for an icon representing
         the plugin object in a text editor.
         """
-        return "%s - %s" % (force_text(self.name), force_text(instance))
+        return "%s - %s" % (force_str(self.name), force_str(instance))
 
     def get_fieldsets(self, request, obj=None):
         """

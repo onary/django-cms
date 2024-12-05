@@ -17,7 +17,7 @@ from django.forms.widgets import Media
 from sekizai.context import SekizaiContext
 from django.test.testcases import TestCase
 from django.utils import timezone
-from django.utils.encoding import force_text
+from django.utils.encoding import force_str
 
 from cms import api
 from cms.constants import PLUGIN_MOVE_ACTION, PLUGIN_COPY_ACTION
@@ -1117,12 +1117,12 @@ class PluginsTestCase(PluginsTestBaseCase):
         style_config = style_config[0]
 
         with force_language('en'):
-            self.assertEqual(force_text(style_config['module']), expected_struct_en['module'])
-            self.assertEqual(force_text(style_config['name']), expected_struct_en['name'])
+            self.assertEqual(force_str(style_config['module']), expected_struct_en['module'])
+            self.assertEqual(force_str(style_config['name']), expected_struct_en['name'])
 
         with force_language('de'):
-            self.assertEqual(force_text(style_config['module']), expected_struct_de['module'])
-            self.assertEqual(force_text(style_config['name']), expected_struct_de['name'])
+            self.assertEqual(force_str(style_config['module']), expected_struct_de['module'])
+            self.assertEqual(force_str(style_config['name']), expected_struct_de['name'])
 
     def test_plugin_toolbar_struct_permissions(self):
         page = self.get_permissions_test_page()

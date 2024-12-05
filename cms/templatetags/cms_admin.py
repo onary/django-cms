@@ -9,7 +9,7 @@ from sekizai.helpers import get_varname
 
 from django import template
 from django.conf import settings
-from django.utils.encoding import force_text
+from django.utils.encoding import force_str
 from django.utils.safestring import mark_safe
 from django.utils.translation import ugettext_lazy as _
 
@@ -71,7 +71,7 @@ class TreePublishRow(Tag):
                 text = _("no content")
         return mark_safe(
             '<span class="cms-hover-tooltip cms-hover-tooltip-left cms-hover-tooltip-delay %s" '
-            'data-cms-tooltip="%s"></span>' % (cls, force_text(text)))
+            'data-cms-tooltip="%s"></span>' % (cls, force_str(text)))
 
 
 register.tag(TreePublishRow)

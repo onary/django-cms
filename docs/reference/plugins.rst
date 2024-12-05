@@ -346,7 +346,7 @@ CMSPluginBase Attributes and Methods Reference
         The default implementation is as follows::
 
             def icon_alt(self, instance):
-                return "%s - %s" % (force_text(self.name), force_text(instance))
+                return "%s - %s" % (force_str(self.name), force_str(instance))
 
         See also: :attr:`text_enabled`, :attr:`icon_src`.
 

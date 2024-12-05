@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from django.conf import settings
 from django.db import models
-from django.utils.encoding import force_text
+from django.utils.encoding import force_str
 from django.utils.translation import ugettext_lazy as _
 
 from cms.multidb import RoutingOneToOneField
@@ -19,7 +19,7 @@ class UserSettings(models.Model):
         app_label = 'cms'
 
     def __str__(self):
-        return force_text(self.user)
+        return force_str(self.user)
 
     def has_placeholder_change_permission(self, user):
         return True

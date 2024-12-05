@@ -6,7 +6,7 @@ from django.core.exceptions import ValidationError
 from django.urls import reverse
 from django.db.models import Q
 from django.utils import timezone
-from django.utils.encoding import force_text
+from django.utils.encoding import force_str
 from django.utils.safestring import mark_safe
 from six.moves.urllib.parse import unquote
 from django.utils.translation import ugettext_lazy as _, ungettext_lazy
@@ -162,7 +162,7 @@ def is_valid_url(url, instance, create_links=True, site=None):
                     # Format return message with page url
                     url_clashes.append('<a href="%(page_url)s%(pk)s" target="_blank">%(page_title)s</a>' % {
                         'page_url': admin_reverse('cms_page_changelist'), 'pk': page.pk,
-                        'page_title': force_text(page),
+                        'page_title': force_str(page),
                     })
                 else:
                     # Just return the page name

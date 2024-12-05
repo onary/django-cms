@@ -8,7 +8,7 @@ from django.core.exceptions import ValidationError, ObjectDoesNotExist
 from django.forms.utils import ErrorList
 from django.forms.widgets import HiddenInput
 from django.template.defaultfilters import slugify
-from django.utils.encoding import force_text
+from django.utils.encoding import force_str
 from django.utils.translation import ugettext, ugettext_lazy as _, get_language
 
 from cms.apphook_pool import apphook_pool
@@ -172,7 +172,7 @@ class PageForm(forms.ModelForm):
                     if hasattr(exc, 'messages'):
                         errors = exc.messages
                     else:
-                        errors = [force_text(exc.message)]
+                        errors = [force_str(exc.message)]
                     self._errors['slug'] = ErrorList(errors)
         return cleaned_data
 
@@ -285,7 +285,7 @@ class AdvancedSettingsForm(forms.ModelForm):
                     app_configs=app_configs)
 
                 if page_data.get('application_urls', False) and page_data['application_urls'] in app_configs:
-                    self.fields['application_configs'].choices = [(config.pk, force_text(config)) for config in app_configs[page_data['application_urls']].get_configs()]
+                    self.fields['application_configs'].choices = [(config.pk, force_str(config)) for config in app_configs[page_data['application_urls']].get_configs()]
 
                     apphook = page_data.get('application_urls', False)
                     try:
@@ -803,5 +803,5 @@ class PluginAddValidationForm(forms.Form):
                 template=template
             )
         except PluginLimitReached as error:
-            self.add_error(None, force_text(error))
+            self.add_error(None, force_str(error))
         return self.cleaned_data

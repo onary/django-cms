@@ -13,7 +13,7 @@ from django.contrib.sites.models import Site
 from django.urls import reverse
 from django.http import (Http404, HttpResponseBadRequest, HttpResponseForbidden,
                          QueryDict, HttpResponseNotFound)
-from django.utils.encoding import force_text, smart_str
+from django.utils.encoding import force_str, smart_str
 from django.utils import timezone
 from six.moves.urllib.parse import urlparse
 
@@ -888,7 +888,7 @@ class PluginPermissionTests(AdminTestsBase):
         url = '%s/edit-plugin/%s/' % (admin_reverse('cms_page_edit_plugin', args=[plugin.id]), plugin.id)
         response = self.client.post(url, dict())
         self.assertEqual(response.status_code, HttpResponseNotFound.status_code)
-        self.assertTrue("Plugin not found" in force_text(response.content))
+        self.assertTrue("Plugin not found" in force_str(response.content))
 
 
 class AdminFormsTests(AdminTestsBase):
@@ -1225,7 +1225,7 @@ class AdminFormsTests(AdminTestsBase):
         user = self.get_superuser()
         self.assertEqual(Placeholder.objects.all().count(), 4)
         with self.login_user_context(user):
-            output = force_text(
+            output = force_str(
                 self.client.get(
                     '/en/?%s' % get_cms_setting('CMS_TOOLBAR_URL__EDIT_ON')
                 ).content
@@ -1235,7 +1235,7 @@ class AdminFormsTests(AdminTestsBase):
             self.assertEqual(StaticPlaceholder.objects.count(), 2)
             for placeholder in Placeholder.objects.all():
                 add_plugin(placeholder, TextPlugin, 'en', body='<b>Test</b>')
-            output = force_text(
+            output = force_str(
                 self.client.get(
                     '/en/?%s' % get_cms_setting('CMS_TOOLBAR_URL__EDIT_ON')
                 ).content
@@ -1254,7 +1254,7 @@ class AdminFormsTests(AdminTestsBase):
         user = self.get_superuser()
         with self.login_user_context(user):
             with self.assertNumQueries(FuzzyInt(12, 22)):
-                force_text(self.client.get(URL_CMS_PAGE))
+                force_str(self.client.get(URL_CMS_PAGE))
 
     def test_smart_link_published_pages(self):
         admin, staff_guy = self._get_guys()

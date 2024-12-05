@@ -21,7 +21,7 @@ except ImportError:
     from django.db.models.fields.related import ForwardManyToOneDescriptor
 import six
 from django.utils import timezone
-from django.utils.encoding import force_text
+from django.utils.encoding import force_str
 from django.utils.safestring import mark_safe
 from six.moves import filter
 from django.utils.translation import ugettext_lazy as _
@@ -202,7 +202,7 @@ class CMSPlugin(six.with_metaclass(PluginModelBase, MP_Node)):
         text_enabled = False
 
     def __str__(self):
-        return force_text(self.pk)
+        return force_str(self.pk)
 
     def get_plugin_name(self):
         from cms.plugin_pool import plugin_pool
@@ -212,7 +212,7 @@ class CMSPlugin(six.with_metaclass(PluginModelBase, MP_Node)):
     def get_short_description(self):
         instance = self.get_plugin_instance()[0]
         if instance is not None:
-            return force_text(instance)
+            return force_str(instance)
         return _("<Empty>")
 
     def get_plugin_class(self):
@@ -321,7 +321,7 @@ class CMSPlugin(six.with_metaclass(PluginModelBase, MP_Node)):
         Get alt text for instance's icon
         """
         instance, plugin = self.get_plugin_instance()
-        return force_text(plugin.icon_alt(instance)) if instance else u''
+        return force_str(plugin.icon_alt(instance)) if instance else u''
 
     def update(self, refresh=False, **fields):
         CMSPlugin.objects.filter(pk=self.pk).update(**fields)
@@ -494,23 +494,23 @@ class CMSPlugin(six.with_metaclass(PluginModelBase, MP_Node)):
         breadcrumb = []
         for parent in self.get_ancestors():
             try:
-                url = force_text(
+                url = force_str(
                     admin_reverse("%s_%s_edit_plugin" % (model._meta.app_label, model._meta.model_name),
                                   args=[parent.pk]))
             except NoReverseMatch:
-                url = force_text(
+                url = force_str(
                     admin_reverse("%s_%s_edit_plugin" % (Page._meta.app_label, Page._meta.model_name),
                                   args=[parent.pk]))
-            breadcrumb.append({'title': force_text(parent.get_plugin_name()), 'url': url})
+            breadcrumb.append({'title': force_str(parent.get_plugin_name()), 'url': url})
         try:
-            url = force_text(
+            url = force_str(
                 admin_reverse("%s_%s_edit_plugin" % (model._meta.app_label, model._meta.model_name),
                               args=[self.pk]))
         except NoReverseMatch:
-            url = force_text(
+            url = force_str(
                 admin_reverse("%s_%s_edit_plugin" % (Page._meta.app_label, Page._meta.model_name),
                               args=[self.pk]))
-        breadcrumb.append({'title': force_text(self.get_plugin_name()), 'url': url})
+        breadcrumb.append({'title': force_str(self.get_plugin_name()), 'url': url})
         return breadcrumb
 
     def get_breadcrumb_json(self):

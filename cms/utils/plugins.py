@@ -3,7 +3,7 @@ from collections import defaultdict
 from itertools import groupby, starmap
 from operator import attrgetter, itemgetter
 
-from django.utils.encoding import force_text
+from django.utils.encoding import force_str
 from six.moves import filter, filterfalse
 from django.utils.translation import ugettext as _
 
@@ -252,7 +252,7 @@ def has_reached_plugin_limit(placeholder, plugin_type, language, template=None):
                 .count()
             )
             if type_count >= type_limit:
-                plugin_name = force_text(plugin_pool.get_plugin(plugin_type).name)
+                plugin_name = force_str(plugin_pool.get_plugin(plugin_type).name)
                 raise PluginLimitReached(_(
                     "This placeholder already has the maximum number (%(limit)s) of allowed %(plugin_name)s plugins.") \
                                          % {'limit': type_limit, 'plugin_name': plugin_name})
