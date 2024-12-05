@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from django.contrib.admin.templatetags.admin_static import static
+from django.templatetags.static import static
 from django.contrib.auth import get_permission_codename
 from django.contrib.sites.models import Site
 from django.urls import NoReverseMatch, reverse_lazy
