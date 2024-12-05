@@ -2,7 +2,7 @@
 from functools import wraps
 
 from django.contrib.sites.models import Site
-from django.utils.decorators import available_attrs
+# from django.utils.decorators import available_attrs
 
 from cms.api import get_page_draft
 from cms.cache.permissions import get_permission_cache, set_permission_cache
@@ -72,7 +72,7 @@ def _get_page_ids_for_action(user, site, action, check_global=True, use_cache=Tr
 
 def permission_pre_checks(action):
     def decorator(func):
-        @wraps(func, assigned=available_attrs(func))
+        @wraps(func)
         def wrapper(user, *args, **kwargs):
             if not user.is_authenticated():
                 return False

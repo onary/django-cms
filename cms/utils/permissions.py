@@ -8,7 +8,7 @@ from django.contrib.auth import get_permission_codename, get_user_model
 from django.contrib.auth.models import Group
 from django.contrib.sites.models import Site
 from django.db.models import Q
-from django.utils.decorators import available_attrs
+# from django.utils.decorators import available_attrs
 from django.utils.lru_cache import lru_cache
 
 from cms.constants import ROOT_USER_LEVEL
@@ -137,7 +137,7 @@ def get_user_permission_level(user, site):
 
 
 def cached_func(func):
-    @wraps(func, assigned=available_attrs(func))
+    @wraps(func)
     def cached_func(user, *args, **kwargs):
         func_cache_name = '_djangocms_cached_func_%s' % func.__name__
 
