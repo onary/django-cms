@@ -8,9 +8,14 @@ from django.db.models import ForeignKey
 from django.db.models.deletion import CASCADE
 from django.db.models.fields.related_descriptors import ReverseOneToOneDescriptor
 from django.db.models.fields.reverse_related import OneToOneRel
-from django.utils.deprecation import RemovedInDjango20Warning
+# from django.utils.deprecation import RemovedInDjango20Warning
 from django.utils.translation import ugettext_lazy as _
 from django.utils.version import get_docs_version
+
+try:
+    from django.utils.deprecation import RemovedInDjango30Warning as RIDWorning
+except ImportError:
+    from django.utils.deprecation import  RemovedInDjango40Warning as RIDWorning
 
 
 class AppRouter(object):
@@ -140,7 +145,7 @@ class RoutingOneToOneField(RoutingForeignKey):
                     self.__class__.__name__,
                     get_docs_version(),
                 ),
-                RemovedInDjango20Warning, 2)
+                RIDWorning, 2)
             on_delete = CASCADE
 
         elif not callable(on_delete):
@@ -150,7 +155,7 @@ class RoutingOneToOneField(RoutingForeignKey):
                     self.__class__.__name__,
                     on_delete,
                 ),
-                RemovedInDjango20Warning, 2)
+                RIDWorning, 2)
             to_field = on_delete
             on_delete = CASCADE  # Avoid warning in superclass
 
