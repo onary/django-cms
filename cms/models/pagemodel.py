@@ -28,7 +28,7 @@ from treebeard.mp_tree import MP_Node
 logger = getLogger(__name__)
 
 
-# @python_2_unicode_compatible
+
 class Page(six.with_metaclass(PageMetaClass, MP_Node)):
     """
     A simple hierarchical page model

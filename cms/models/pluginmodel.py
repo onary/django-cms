@@ -170,7 +170,7 @@ class PluginModelBase(ModelBase):
         return new_class
 
 
-# @python_2_unicode_compatible
+
 class CMSPlugin(six.with_metaclass(PluginModelBase, MP_Node)):
     '''
     The base class for a CMS plugin model. When defining a new custom plugin, you should

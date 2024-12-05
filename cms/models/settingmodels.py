@@ -6,7 +6,7 @@ from django.utils.translation import ugettext_lazy as _
 
 from cms.multidb import RoutingOneToOneField
 
-# @python_2_unicode_compatible
+
 class UserSettings(models.Model):
     user = RoutingOneToOneField(settings.AUTH_USER_MODEL, editable=False, related_name='djangocms_usersettings')
     language = models.CharField(_("Language"), max_length=10, choices=settings.LANGUAGES,

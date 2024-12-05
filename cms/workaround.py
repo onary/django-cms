@@ -41,6 +41,3 @@ class LocaleRegexURLResolver(RegexURLResolver):
         # Add any custom locale-based resolving logic here if needed
         return super().resolve(path)
 
-
-def python_2_unicode_compatible(cls):
-    return cls

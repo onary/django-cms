@@ -6,7 +6,7 @@ from django.utils.encoding import force_str
 from cms.models import CMSPlugin, Placeholder
 
 
-# @python_2_unicode_compatible
+
 class AliasPluginModel(CMSPlugin):
     cmsplugin_ptr = models.OneToOneField(CMSPlugin, related_name='cms_aliasplugin', parent_link=True, on_delete=models.CASCADE)
     plugin = models.ForeignKey(CMSPlugin, editable=False, related_name="alias_reference", null=True, on_delete=models.SET_NULL)
