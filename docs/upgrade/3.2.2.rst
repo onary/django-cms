@@ -69,7 +69,8 @@ name. Here's an example:
         cmsplugin_ptr = models.OneToOneField(
             CMSPlugin,
             related_name='my_package_my_plugin',
-            parent_link=True
+            parent_link=True,
+            on_delete=models.CASCADE
         )
 
         # other fields, etc.

@@ -43,7 +43,7 @@ class Title(models.Model):
     published = models.BooleanField(_("is published"), blank=True, default=False)
     publisher_is_draft = models.BooleanField(default=True, editable=False, db_index=True)
     # This is misnamed - the one-to-one relation is populated on both ends
-    publisher_public = models.OneToOneField('self', related_name='publisher_draft', null=True, editable=False)
+    publisher_public = models.OneToOneField('self', related_name='publisher_draft', null=True, editable=False, on_delete=models.CASCADE)
     publisher_state = models.SmallIntegerField(default=0, editable=False, db_index=True)
 
     objects = TitleManager()

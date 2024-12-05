@@ -8,7 +8,7 @@ from django.db import models
 
 # @python_2_unicode_compatible
 class PlaceholderReference(CMSPlugin):
-    cmsplugin_ptr = models.OneToOneField(CMSPlugin, related_name='cms_placeholderreference', parent_link=True)
+    cmsplugin_ptr = models.OneToOneField(CMSPlugin, related_name='cms_placeholderreference', parent_link=True, on_delete=models.CASCADE)
     name = models.CharField(max_length=255)
     placeholder_ref = PlaceholderField(slotname='clipboard', on_delete=models.CASCADE)
     class Meta:

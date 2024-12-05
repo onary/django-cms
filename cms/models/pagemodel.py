@@ -97,7 +97,7 @@ class Page(six.with_metaclass(PageMetaClass, MP_Node)):
     # Publisher fields
     publisher_is_draft = models.BooleanField(default=True, editable=False, db_index=True)
     # This is misnamed - the one-to-one relation is populated on both ends
-    publisher_public = models.OneToOneField('self', related_name='publisher_draft', null=True, editable=False)
+    publisher_public = models.OneToOneField('self', related_name='publisher_draft', null=True, editable=False, on_delete=models.CASCADE)
     languages = models.CharField(max_length=255, editable=False, blank=True, null=True)
 
     # If the draft is loaded from a reversion version save the revision id here.
