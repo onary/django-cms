@@ -1,16 +1,16 @@
 
-from django.urls.resolvers import RegexPattern
-from django.urls import ResolverMatch
 
 
 class RegexURLPattern:
     def __init__(self, regex, callback, default_args=None, name=None):
+        from django.urls.resolvers import RegexPattern
         self.pattern = RegexPattern(regex)
         self.callback = callback
         self.default_args = default_args or {}
         self.name = name
 
     def resolve(self, path):
+        from django.urls import ResolverMatch
         match = self.pattern.match(path)
         if match:
             # Combine matched arguments with default arguments
@@ -22,7 +22,7 @@ class RegexURLPattern:
 
 class RegexURLResolver:
     def __init__(self, regex_pattern, urlconf_name):
-        # from django.urls.resolvers import RegexPattern
+        from django.urls.resolvers import RegexPattern
         self.regex_pattern = RegexPattern(regex_pattern)
         self.urlconf_name = urlconf_name
 
