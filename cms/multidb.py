@@ -79,7 +79,7 @@ class RoutingForeignKey(ForeignKey):
     ConnectionRouter to access the related object.
     """
 
-    def __init__(self, to, on_delete=None, related_name=None, related_query_name=None,
+    def __init__(self, to, on_delete=CASCADE, related_name=None, related_query_name=None,
             limit_choices_to=None, parent_link=False, to_field=None,
             db_constraint=True, **kwargs):
         db_constraint = False

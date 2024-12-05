@@ -56,8 +56,8 @@ class AbstractPagePermission(models.Model):
     """
 
     # who:
-    user = RoutingForeignKey(settings.AUTH_USER_MODEL, verbose_name=_("user"), blank=True, null=True)
-    group = RoutingForeignKey(Group, verbose_name=_("group"), blank=True, null=True)
+    user = RoutingForeignKey(settings.AUTH_USER_MODEL, verbose_name=_("user"), blank=True, null=True, on_delete=models.SET_NULL)
+    group = RoutingForeignKey(Group, verbose_name=_("group"), blank=True, null=True, on_delete=models.SET_NULL)
 
     # what:
     can_change = models.BooleanField(_("can edit"), default=True)
@@ -249,7 +249,7 @@ class PageUserManager(UserManager):
 class PageUser(User):
     """Cms specific user data, required for permission system
     """
-    created_by = RoutingForeignKey(settings.AUTH_USER_MODEL, related_name="created_users")
+    created_by = RoutingForeignKey(settings.AUTH_USER_MODEL, related_name="created_users", on_delete=models.CASCADE)
 
     objects = PageUserManager()
 
@@ -262,7 +262,7 @@ class PageUser(User):
 class PageUserGroup(Group):
     """Cms specific group data, required for permission system
     """
-    created_by = RoutingForeignKey(settings.AUTH_USER_MODEL, related_name="created_usergroups")
+    created_by = RoutingForeignKey(settings.AUTH_USER_MODEL, related_name="created_usergroups", on_delete=models.CASCADE)
 
     class Meta:
         verbose_name = _('User group (page)')
