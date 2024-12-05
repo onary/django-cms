@@ -9,7 +9,8 @@ documented clearly within this file with comments.
 For documentation on how to use the functions described in this file, please
 refer to https://django-load.readthedocs.io/en/latest/index.html.
 """
-import imp
+# import imp
+import importlib.util
 import traceback # changed
 from importlib import import_module
 
@@ -26,7 +27,10 @@ def get_module(app, modname, verbose, failfast):
     # the module *should* exist - raise an error if it doesn't
     app_mod = import_module(app)
     try:
-        imp.find_module(modname, app_mod.__path__ if hasattr(app_mod, '__path__') else None)
+        # imp.find_module(modname, app_mod.__path__ if hasattr(app_mod, '__path__') else None)
+        spec = importlib.util.find_spec(modname, app_mod.__path__ if hasattr(app_mod, '__path__') else None)
+        if spec is None:
+            raise ImportError(f"Module {modname} not found")
     except ImportError:
         # this ImportError will be due to the module not existing
         # so here we can silently ignore it.  But an ImportError
