@@ -3,7 +3,7 @@ from logging import getLogger
 from os.path import join
 
 from django.contrib.sites.models import Site
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.db import models
 from django.utils import six
 from django.utils.encoding import force_text, python_2_unicode_compatible

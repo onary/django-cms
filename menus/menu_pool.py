@@ -8,7 +8,7 @@ from django.contrib import messages
 from django.contrib.sites.models import Site
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
-from django.core.urlresolvers import NoReverseMatch
+from django.urls import NoReverseMatch
 from django.utils.translation import ugettext_lazy as _
 
 from cms.utils import get_cms_setting, get_language_from_request

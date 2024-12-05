@@ -2,7 +2,7 @@
 
 from django.conf import settings
 from django.contrib.auth.views import redirect_to_login
-from django.core.urlresolvers import resolve, Resolver404, reverse
+from django.urls import resolve, Resolver404, reverse
 from django.http import HttpResponseRedirect, HttpResponse
 from django.utils.cache import patch_cache_control
 from django.utils.http import urlquote

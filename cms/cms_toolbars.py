@@ -4,7 +4,7 @@ from django.conf import settings
 from django.contrib import admin
 from django.contrib.auth import get_permission_codename, get_user_model
 from django.contrib.auth.models import AnonymousUser
-from django.core.urlresolvers import reverse, NoReverseMatch, resolve, Resolver404
+from django.urls import reverse, NoReverseMatch, resolve, Resolver404
 from django.template.loader import render_to_string
 from django.utils.safestring import mark_safe
 from django.utils.translation import ugettext_lazy as _

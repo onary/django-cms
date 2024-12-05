@@ -5,8 +5,9 @@ from importlib import import_module
 from django.conf import settings
 from django.contrib.sites.models import Site
 from django.core.exceptions import ImproperlyConfigured
-from django.core.urlresolvers import (RegexURLResolver, Resolver404, reverse,
-                                      RegexURLPattern)
+
+from django.urls import  Resolver404, reverse
+from cms.utils import RegexURLResolver, RegexURLPattern
 from django.db import OperationalError, ProgrammingError
 from django.utils import six
 from django.utils.translation import get_language, override

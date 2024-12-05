@@ -2,7 +2,7 @@
 import functools
 
 from django.contrib.sites.models import Site
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.utils.functional import SimpleLazyObject
 
 from cms import constants

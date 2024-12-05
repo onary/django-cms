@@ -3,7 +3,7 @@ from cms.models.titlemodels import Title
 from cms.utils import get_language_from_request
 from cms.utils.i18n import force_language, hide_untranslated
 from django.conf import settings
-from django.core.urlresolvers import NoReverseMatch, reverse, resolve
+from django.urls import NoReverseMatch, reverse, resolve
 
 
 def mark_descendants(nodes):

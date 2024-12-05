@@ -10,7 +10,7 @@ from django.contrib.admin.sites import site
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission, AnonymousUser
 from django.contrib.sites.models import Site
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.http import (Http404, HttpResponseBadRequest, HttpResponseForbidden,
                          QueryDict, HttpResponseNotFound)
 from django.utils.encoding import force_text, smart_str

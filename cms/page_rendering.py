@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from django.conf import settings
-from django.core.urlresolvers import resolve, Resolver404
+from django.urls import resolve, Resolver404
 from django.http import Http404
 from django.template.response import TemplateResponse
 

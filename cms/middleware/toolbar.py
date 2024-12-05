@@ -3,7 +3,7 @@
 Edit Toolbar middleware
 """
 from django.contrib.admin.models import LogEntry, ADDITION, CHANGE
-from django.core.urlresolvers import resolve
+from django.urls import resolve
 from django.http import HttpResponse
 
 from cms.toolbar.toolbar import CMSToolbar

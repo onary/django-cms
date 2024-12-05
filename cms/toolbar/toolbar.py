@@ -14,7 +14,7 @@ from django import forms
 from django.conf import settings
 from django.contrib.auth import login, logout, REDIRECT_FIELD_NAME
 from django.contrib.auth.forms import AuthenticationForm
-from django.core.urlresolvers import resolve, Resolver404
+from django.urls import resolve, Resolver404
 from django.http import HttpResponseRedirect, HttpResponse
 from django.middleware.csrf import get_token
 from django.utils.functional import cached_property
