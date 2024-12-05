@@ -725,7 +725,7 @@
 - Removed file cms/utils/compat/type_checks.py, use django.utils.six module instead
 - Removed file cms/utils/compat/string_io.py, use django.utils.six module instead
 - Removed file cms/utils/compat/input.py, use django.utils.six module instead
-- Use PY3 from django.utils.six instead of PY2 from cms.utils.compat to check Python version
+- Use PY3 from six instead of PY2 from cms.utils.compat to check Python version
 - Staticplaceholders have not their own permissions
 - Apphooks support now nested namespaces
 - Apphooks can now exclude module for page permission checking

@@ -19,7 +19,7 @@ from django.utils.encoding import smart_text, force_text
 from django.utils.html import escape
 from django.utils.http import urlencode
 from django.utils.safestring import mark_safe
-from django.utils.six import string_types
+from six import string_types
 from django.utils.translation import ugettext_lazy as _, get_language
 
 from classytags.arguments import (Argument, MultiValueArgument,

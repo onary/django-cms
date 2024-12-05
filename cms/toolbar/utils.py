@@ -1,7 +1,7 @@
 import json
 
 from django.utils.encoding import force_text
-from django.utils.six import text_type
+from six import text_type
 from django.utils.translation import ugettext
 
 from cms.constants import PLACEHOLDER_TOOLBAR_JS, PLUGIN_TOOLBAR_JS
