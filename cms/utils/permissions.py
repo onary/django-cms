@@ -9,8 +9,8 @@ from django.contrib.auth.models import Group
 from django.contrib.sites.models import Site
 from django.db.models import Q
 # from django.utils.decorators import available_attrs
-from django.utils.lru_cache import lru_cache
 
+from functools import lru_cache
 from cms.constants import ROOT_USER_LEVEL
 from cms.exceptions import NoPermissionsException
 from cms.models import (Page, PagePermission, GlobalPagePermission)
