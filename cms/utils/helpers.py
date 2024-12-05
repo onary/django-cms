@@ -3,7 +3,8 @@ import re
 
 from django.contrib.sites.models import SITE_CACHE, Site
 from django.utils.timezone import get_current_timezone_name
-from django.utils.translation import force_text
+# from django.utils.translation import force_text
+from django.utils.encoding import force_str
 
 from .compat.dj import is_installed
 
@@ -84,7 +85,7 @@ def get_header_name(name):
     Won't add "HTTP_" to input that already has it or for CONTENT_TYPE or
     CONTENT_LENGTH.
     """
-    uc_name = re.sub(r'\W+', '_', force_text(name)).upper()
+    uc_name = re.sub(r'\W+', '_', force_str(name)).upper()
     if (uc_name in ['CONTENT_LENGTH', 'CONTENT_TYPE'] or
             uc_name.startswith('HTTP_')):
         return uc_name
@@ -103,7 +104,7 @@ def get_timezone_name():
     # Windows is known to use non-standard, locale-dependant names.
     # User-defined tzinfo classes may return absolutely anything.
     # Hence this paranoid conversion to create a valid cache key.
-    tz_name = force_text(get_current_timezone_name(), errors='ignore')
+    tz_name = force_str(get_current_timezone_name(), errors='ignore')
     return tz_name.encode('ascii', 'ignore').decode('ascii').replace(' ', '_')
 
 
