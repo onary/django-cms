@@ -3,7 +3,7 @@ from __future__ import absolute_import, print_function, unicode_literals
 
 from collections import OrderedDict
 
-import cms
+from cms import __version__
 
 from .subcommands.base import SubcommandsCommand
 from .subcommands.check import CheckInstallation
@@ -33,7 +33,7 @@ class Command(SubcommandsCommand):
     subcommand_dest = 'cmd'
 
     def get_version(self):
-        return cms.__version__
+        return __version__
 
     def add_arguments(self, parser):
         parser.add_argument('--version', action='version', version=self.get_version())

@@ -17,7 +17,8 @@ from djangocms_text_ckeditor.cms_plugins import TextPlugin
 from sekizai.data import UniqueSequence
 from sekizai.helpers import get_varname
 
-import cms
+# import cms
+from cms import __version__
 from cms.api import create_page, create_title, add_plugin
 from cms.middleware.toolbar import ToolbarMiddleware
 from cms.models import Page, Placeholder
@@ -90,7 +91,7 @@ class TemplatetagTests(CMSTestCase):
 
     def test_static_with_version(self):
         expected = '<script src="/static/cms/css/%(version)s/cms.base.css" type="text/javascript"></script>'
-        expected = expected % {'version': cms.__version__}
+        expected = expected % {'version': __version__}
 
         template = (
             """{% load cms_static %}<script src="{% static_with_version "cms/css/cms.base.css" %}" """

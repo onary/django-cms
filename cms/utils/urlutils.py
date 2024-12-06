@@ -7,7 +7,8 @@ from django.utils.encoding import force_str
 from django.utils.http import urlencode
 from six.moves.urllib.parse import urlparse
 
-import cms
+# import cms
+from cms import __version__
 
 from cms.utils.conf import get_cms_setting
 
@@ -74,7 +75,7 @@ def static_with_version(path):
     """
     path_re = re.compile('(.*)/([^/]*$)')
 
-    return re.sub(path_re, r'\1/%s/\2' % (cms.__version__), path)
+    return re.sub(path_re, r'\1/%s/\2' % (__version__), path)
 
 
 def add_url_parameters(url, *args, **params):
