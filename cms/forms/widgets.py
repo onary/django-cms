@@ -67,7 +67,7 @@ class PageSelectWidget(MultiWidget):
             return True
         return False
 
-    def render(self, name, value, attrs=None):
+    def render(self, name, value, attrs=None, **kwargs):
         # THIS IS A COPY OF django.forms.widgets.MultiWidget.render()
         # (except for the last line)
 
@@ -138,7 +138,7 @@ class PageSmartLinkWidget(TextInput):
                 'You should provide an ajax_view argument that can be reversed to the PageSmartLinkWidget'
             )
 
-    def render(self, name=None, value=None, attrs=None):
+    def render(self, name=None, value=None, attrs=None, **kwargs):
         final_attrs = self.build_attrs(attrs)
         id_ = final_attrs.get('id', None)
 
@@ -160,7 +160,7 @@ class PageSmartLinkWidget(TextInput):
             'ajax_url': force_str(self.ajax_url)
         }]
 
-        output.append(super(PageSmartLinkWidget, self).render(name, value, attrs))
+        output.append(super(PageSmartLinkWidget, self).render(name, value, attrs, **kwargs))
         return mark_safe(u''.join(output))
 
 
@@ -172,8 +172,8 @@ class UserSelectAdminWidget(Select):
     Current user should be assigned to widget in form constructor as an user
     attribute.
     """
-    def render(self, name, value, attrs=None, choices=()):
-        output = [super(UserSelectAdminWidget, self).render(name, value, attrs)]
+    def render(self, name, value, attrs=None, choices=(), **kwargs):
+        output = [super(UserSelectAdminWidget, self).render(name, value, attrs, **kwargs)]
         if hasattr(self, 'user') and (self.user.is_superuser or \
             self.user.has_perm(PageUser._meta.app_label + '.' + get_permission_codename('add', PageUser._meta))):
             # append + icon
@@ -245,8 +245,8 @@ class ApplicationConfigSelect(Select):
         self.app_configs = app_configs
         super(ApplicationConfigSelect, self).__init__(attrs, choices)
 
-    def render(self, name, value, attrs=None, choices=()):
-        output = list(super(ApplicationConfigSelect, self).render(name, value, attrs))
+    def render(self, name, value, attrs=None, choices=(), **kwargs):
+        output = list(super(ApplicationConfigSelect, self).render(name, value, attrs, **kwargs))
         output.append('<script>\n')
         output.append('var apphooks_configuration = {\n')
         for application, cms_app in self.app_configs.items():
