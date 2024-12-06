@@ -54,7 +54,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='cmsplugin',
             name='parent',
-            field=models.ForeignKey(null=True, to='cms.CMSPlugin', blank=True, editable=False),
+            field=models.ForeignKey(null=True, to='cms.CMSPlugin', blank=True, editable=False, on_delete=models.SET_NULL),
             preserve_default=True,
         ),
         migrations.CreateModel(
@@ -70,9 +70,9 @@ class Migration(migrations.Migration):
                 ('can_move_page', models.BooleanField(default=True, verbose_name=_('can move'))),
                 ('can_view', models.BooleanField(default=False, help_text='frontend view restriction', verbose_name=_('view restricted'))),
                 ('can_recover_page', models.BooleanField(default=True, help_text='can recover any deleted page', verbose_name=_('can recover pages'))),
-                ('group', models.ForeignKey(null=True, to='auth.Group', verbose_name=_('group'), blank=True)),
+                ('group', models.ForeignKey(null=True, to='auth.Group', verbose_name=_('group'), blank=True, on_delete=models.SET_NULL)),
                 ('sites', models.ManyToManyField(null=True, help_text='If none selected, user haves granted permissions to all sites.', blank=True, to='sites.Site', verbose_name=_('sites'))),
-                ('user', models.ForeignKey(null=True, to=settings.AUTH_USER_MODEL, verbose_name=_('user'), blank=True)),
+                ('user', models.ForeignKey(null=True, to=settings.AUTH_USER_MODEL, verbose_name=_('user'), blank=True, on_delete=models.SET_NULL)),
             ],
             options={
                 'verbose_name': 'Page global permission',
@@ -108,9 +108,9 @@ class Migration(migrations.Migration):
                 ('languages', models.CharField(max_length=255, null=True, blank=True, editable=False)),
                 ('revision_id', models.PositiveIntegerField(default=0, editable=False)),
                 ('xframe_options', models.IntegerField(default=get_cms_setting('DEFAULT_X_FRAME_OPTIONS'), choices=Page.X_FRAME_OPTIONS_CHOICES)),
-                ('parent', models.ForeignKey(null=True, to='cms.Page', related_name='children', blank=True)),
+                ('parent', models.ForeignKey(null=True, to='cms.Page', related_name='children', blank=True, on_delete=models.SET_NULL)),
                 ('publisher_public', models.OneToOneField(null=True, to='cms.Page', related_name='publisher_draft', editable=False, on_delete=models.SET_NULL)),
-                ('site', models.ForeignKey(to='sites.Site', verbose_name=_('site'), related_name='djangocms_pages', help_text='The site the page is accessible at.')),
+                ('site', models.ForeignKey(to='sites.Site', verbose_name=_('site'), related_name='djangocms_pages', help_text='The site the page is accessible at.', on_delete=models.SET_NULL)),
             ],
             options={
                 'ordering': ('tree_id', 'lft'),
@@ -133,9 +133,9 @@ class Migration(migrations.Migration):
                 ('can_move_page', models.BooleanField(default=True, verbose_name=_('can move'))),
                 ('can_view', models.BooleanField(default=False, help_text='frontend view restriction', verbose_name=_('view restricted'))),
                 ('grant_on', models.IntegerField(default=5, verbose_name=_('Grant on'), choices=ACCESS_CHOICES)),
-                ('group', models.ForeignKey(null=True, to='auth.Group', verbose_name=_('group'), blank=True)),
-                ('page', models.ForeignKey(null=True, to='cms.Page', verbose_name=_('page'), blank=True)),
-                ('user', models.ForeignKey(null=True, to=settings.AUTH_USER_MODEL, verbose_name=_('user'), blank=True)),
+                ('group', models.ForeignKey(null=True, to='auth.Group', verbose_name=_('group'), blank=True, on_delete=models.SET_NULL)),
+                ('page', models.ForeignKey(null=True, to='cms.Page', verbose_name=_('page'), blank=True, on_delete=models.SET_NULL)),
+                ('user', models.ForeignKey(null=True, to=settings.AUTH_USER_MODEL, verbose_name=_('user'), blank=True, on_delete=models.SET_NULL)),
             ],
             options={
                 'verbose_name': 'Page permission',
