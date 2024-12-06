@@ -114,7 +114,7 @@ class MenuRenderer(object):
 
         key = '%smenu_nodes_%s_%s' % (prefix, self.language, site_id)
 
-        if self.request.user.is_authenticated():
+        if self.request.user.is_authenticated:
             key += '_%s_user' % self.request.user.pk
 
         if self.draft_mode_active:

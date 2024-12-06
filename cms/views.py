@@ -30,7 +30,7 @@ def details(request, slug):
         not hasattr(request, 'toolbar') or (
             not request.toolbar.edit_mode and
             not request.toolbar.show_toolbar and
-            not request.user.is_authenticated()
+            not request.user.is_authenticated
         )
     ):
         cache_content = get_page_cache(request)
@@ -173,7 +173,7 @@ def details(request, slug):
             return HttpResponseRedirect(redirect_url)
 
     # permission checks
-    if page.login_required and not request.user.is_authenticated():
+    if page.login_required and not request.user.is_authenticated:
         return redirect_to_login(urlquote(request.get_full_path()), settings.LOGIN_URL)
     if hasattr(request, 'toolbar'):
         request.toolbar.set_object(page)

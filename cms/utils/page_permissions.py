@@ -74,7 +74,7 @@ def permission_pre_checks(action):
     def decorator(func):
         @wraps(func)
         def wrapper(user, *args, **kwargs):
-            if not user.is_authenticated():
+            if not user.is_authenticated:
                 return False
 
             if user.is_superuser:
@@ -268,7 +268,7 @@ def user_can_view_page(user, page):
         # Page has no restrictions and project is configured
         # to allow everyone to see unrestricted pages.
         return True
-    elif not user.is_authenticated():
+    elif not user.is_authenticated:
         # Page has restrictions or project is configured
         # to require staff user status to see pages.
         return False
@@ -321,7 +321,7 @@ def user_can_view_all_pages(user, site):
         can_see_unrestricted = public_for == 'all' or (public_for == 'staff' and user.is_staff)
         return can_see_unrestricted
 
-    if not user.is_authenticated():
+    if not user.is_authenticated:
         return False
 
     if user.has_perm(PAGE_VIEW_CODENAME):

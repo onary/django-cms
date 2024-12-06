@@ -11,7 +11,7 @@ def cms_perms(func):
     def inner(request, *args, **kwargs):
         page = request.current_page
         if page:
-            if page.login_required and not request.user.is_authenticated():
+            if page.login_required and not request.user.is_authenticated:
                 return redirect_to_login(urlquote(request.get_full_path()), settings.LOGIN_URL)
             if not user_can_view_page(request.user, page):
                 return _handle_no_page(request, "$")

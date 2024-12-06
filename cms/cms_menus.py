@@ -29,7 +29,7 @@ def get_visible_page_objects(request, pages, site):
     public_for = get_cms_setting('PUBLIC_FOR')
     can_see_unrestricted = public_for == 'all' or (public_for == 'staff' and user.is_staff)
 
-    if not user.is_authenticated() and not can_see_unrestricted:
+    if not user.is_authenticated and not can_see_unrestricted:
         # User is not authenticated and can't see unrestricted pages,
         # no need to check for page restrictions because if there's some,
         # user is anon and if there is not any, user can't see unrestricted.
@@ -47,7 +47,7 @@ def get_visible_page_objects(request, pages, site):
 
     user_id = user.pk
     user_groups = SimpleLazyObject(lambda: frozenset(user.groups.values_list('pk', flat=True)))
-    is_auth_user = user.is_authenticated()
+    is_auth_user = user.is_authenticated
 
     def user_can_see_page(page):
         if page.publisher_is_draft:
