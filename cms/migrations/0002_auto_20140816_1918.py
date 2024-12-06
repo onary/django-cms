@@ -24,7 +24,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='PageUser',
             fields=[
-                (user_ptr_name, models.OneToOneField(primary_key=True, to=settings.AUTH_USER_MODEL, auto_created=True, parent_link=True, serialize=False)),
+                (user_ptr_name, models.OneToOneField(primary_key=True, to=settings.AUTH_USER_MODEL, auto_created=True, parent_link=True, serialize=False, on_delete=models.CASCADE)),
                 ('created_by', models.ForeignKey(to=settings.AUTH_USER_MODEL, related_name='created_users')),
             ],
             options={
@@ -36,7 +36,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='PageUserGroup',
             fields=[
-                ('group_ptr', models.OneToOneField(primary_key=True, to='auth.Group', auto_created=True, parent_link=True, serialize=False)),
+                ('group_ptr', models.OneToOneField(primary_key=True, to='auth.Group', auto_created=True, parent_link=True, serialize=False, on_delete=models.CASCADE)),
                 ('created_by', models.ForeignKey(to=settings.AUTH_USER_MODEL, related_name='created_usergroups')),
             ],
             options={
@@ -81,7 +81,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='PlaceholderReference',
             fields=[
-                ('cmsplugin_ptr', models.OneToOneField(primary_key=True, to='cms.CMSPlugin', auto_created=True, parent_link=True, serialize=False)),
+                ('cmsplugin_ptr', models.OneToOneField(primary_key=True, to='cms.CMSPlugin', auto_created=True, parent_link=True, serialize=False, on_delete=models.CASCADE)),
                 ('name', models.CharField(max_length=255)),
                 ('placeholder_ref', cms.models.fields.PlaceholderField(null=True, to='cms.Placeholder', slotname='clipboard', editable=False)),
             ],
@@ -129,7 +129,7 @@ class Migration(migrations.Migration):
                 ('publisher_is_draft', models.BooleanField(db_index=True, default=True, editable=False)),
                 ('publisher_state', models.SmallIntegerField(db_index=True, default=0, editable=False)),
                 ('page', models.ForeignKey(to='cms.Page', verbose_name='page', related_name='title_set')),
-                ('publisher_public', models.OneToOneField(null=True, to='cms.Title', related_name='publisher_draft', editable=False)),
+                ('publisher_public', models.OneToOneField(null=True, to='cms.Title', related_name='publisher_draft', editable=False, on_delete=models.SET_NULL)),
             ],
             options={
             },

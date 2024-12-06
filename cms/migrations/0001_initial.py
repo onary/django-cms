@@ -44,8 +44,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='AliasPluginModel',
             fields=[
-                ('cmsplugin_ptr', models.OneToOneField(primary_key=True, to='cms.CMSPlugin', auto_created=True, parent_link=True, serialize=False)),
-                ('plugin', models.ForeignKey(null=True, to='cms.CMSPlugin', related_name='alias_reference', editable=False)),
+                ('cmsplugin_ptr', models.OneToOneField(primary_key=True, to='cms.CMSPlugin', auto_created=True, parent_link=True, serialize=False, on_delete=models.CASCADE)),
+                ('plugin', models.ForeignKey(null=True, to='cms.CMSPlugin', related_name='alias_reference', editable=False, on_delete=models.SET_NULL)),
             ],
             options={
             },
@@ -109,7 +109,7 @@ class Migration(migrations.Migration):
                 ('revision_id', models.PositiveIntegerField(default=0, editable=False)),
                 ('xframe_options', models.IntegerField(default=get_cms_setting('DEFAULT_X_FRAME_OPTIONS'), choices=Page.X_FRAME_OPTIONS_CHOICES)),
                 ('parent', models.ForeignKey(null=True, to='cms.Page', related_name='children', blank=True)),
-                ('publisher_public', models.OneToOneField(null=True, to='cms.Page', related_name='publisher_draft', editable=False)),
+                ('publisher_public', models.OneToOneField(null=True, to='cms.Page', related_name='publisher_draft', editable=False, on_delete=models.SET_NULL)),
                 ('site', models.ForeignKey(to='sites.Site', verbose_name=_('site'), related_name='djangocms_pages', help_text='The site the page is accessible at.')),
             ],
             options={
