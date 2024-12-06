@@ -82,7 +82,7 @@ def set_page_cache(response):
                 _page_cache_key(request),
                 (
                     response.content,
-                    response._headers,
+                    response.headers,
                     expires_datetime,
                 ),
                 ttl,

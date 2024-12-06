@@ -406,9 +406,9 @@ class PageAdmin(PlaceholderAdminMixin, admin.ModelAdmin):
 
         response = super(PageAdmin, self).change_view(
             request, object_id, form_url=form_url, extra_context=extra_context)
-        if tab_language and response.status_code == 302 and response._headers['location'][1] == request.path_info:
-            location = response._headers['location']
-            response._headers['location'] = (location[0], "%s?language=%s" % (location[1], tab_language))
+        if tab_language and response.status_code == 302 and response.headers['location'][1] == request.path_info:
+            location = response.headers['location']
+            response.headers['location'] = (location[0], "%s?language=%s" % (location[1], tab_language))
         return response
 
     def delete_model(self, request, obj):
