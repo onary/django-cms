@@ -4,7 +4,7 @@ from django.urls import resolve, Resolver404
 from django.http import Http404
 from django.template.response import TemplateResponse
 
-from cms import __version__
+from cms.workaround import __version__
 from cms.cache.page import set_page_cache
 from cms.models import Page
 from cms.utils import get_template_from_request

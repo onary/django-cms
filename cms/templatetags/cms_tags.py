@@ -30,7 +30,7 @@ from classytags.parser import Parser
 from classytags.utils import flatten_context
 from classytags.values import ListValue, StringValue
 
-from cms import __version__
+from cms.workaround import __version__
 from cms.cache.page import get_page_url_cache, set_page_url_cache
 from cms.models import Page, Placeholder as PlaceholderModel, CMSPlugin, StaticPlaceholder
 from cms.utils import get_language_from_request, get_site_id

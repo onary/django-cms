@@ -41,3 +41,4 @@ class LocaleRegexURLResolver(RegexURLResolver):
         # Add any custom locale-based resolving logic here if needed
         return super().resolve(path)
 
+__version__ = '3.4.4'

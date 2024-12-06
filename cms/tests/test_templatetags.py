@@ -18,7 +18,7 @@ from sekizai.data import UniqueSequence
 from sekizai.helpers import get_varname
 
 # import cms
-from cms import __version__
+from cms.workaround import __version__
 from cms.api import create_page, create_title, add_plugin
 from cms.middleware.toolbar import ToolbarMiddleware
 from cms.models import Page, Placeholder

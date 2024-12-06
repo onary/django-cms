@@ -65,7 +65,7 @@ path = os.path.split(os.path.dirname(__file__))[0]
 path = os.path.split(path)[0]
 sys.path.insert(0, path)
 # import cms
-from cms import __version__
+from cms.workaround import __version__
 version = __version__
 # The full version, including alpha/beta/rc tags.
 release = __version__

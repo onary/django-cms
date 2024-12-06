@@ -8,7 +8,7 @@ from django.utils.http import urlencode
 from six.moves.urllib.parse import urlparse
 
 # import cms
-from cms import __version__
+from cms.workaround import __version__
 
 from cms.utils.conf import get_cms_setting
 
