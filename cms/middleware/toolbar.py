@@ -61,7 +61,7 @@ class ToolbarMiddleware(MiddlewareMixin):
             request.session['cms_toolbar_disabled'] = False
 
         if not request.session.get('cms_toolbar_disabled', False) and (
-                request.user.is_staff or (anonymous_on and request.user.is_anonymous())
+                request.user.is_staff or (anonymous_on and request.user.is_anonymous)
         ):
             if edit_on in request.GET and not request.session.get('cms_edit', False):
                 request.session['cms_edit'] = True
