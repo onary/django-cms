@@ -29,18 +29,18 @@ def bool(value):
 
 @register.simple_tag(takes_context=False)
 def render_placeholder_toolbar_js(placeholder, render_language, content_renderer):
-    print('in render_placeholder_toolbar_js')
+    # print('in render_placeholder_toolbar_js')
     page = placeholder.page
     slot = placeholder.slot
-    print('page', page)
+    # print('page', page)
     placeholder_cache = content_renderer.get_rendered_plugins_cache(placeholder)
     rendered_plugins = placeholder_cache['plugins']
-    print('rendered_plugins', rendered_plugins)
-    print('placeholder_cache', placeholder_cache)
+    # print('rendered_plugins', rendered_plugins)
+    # print('placeholder_cache', placeholder_cache)
     plugin_parents = placeholder_cache['plugin_parents']
     plugin_children = placeholder_cache['plugin_children']
     plugin_pool = content_renderer.plugin_pool
-    print('plugin_pool', plugin_pool)
+    # print('plugin_pool', plugin_pool)
     plugin_types = [cls.__name__ for cls in plugin_pool.get_all_plugins(slot, page)]
     allowed_plugins = plugin_types + plugin_pool.get_system_plugins()
 
