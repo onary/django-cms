@@ -387,6 +387,8 @@ class PlaceholderAdminMixin(object):
                 tree_order=tree_order,
             )
         # return response
+        if isinstance(response, TemplateResponse):
+            response.render()
         return HttpResponse(response)
 
     @method_decorator(require_POST)
@@ -661,6 +663,8 @@ class PlaceholderAdminMixin(object):
                 placeholder=plugin.placeholder,
             )
         # return response
+        if isinstance(response, TemplateResponse):
+            response.render()
         return HttpResponse(response)
 
     @method_decorator(require_POST)
