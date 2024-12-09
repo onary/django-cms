@@ -19,34 +19,64 @@ from six.moves import filter, map
 from .compat.dj import installed_apps
 
 
+# def get_module(app, modname, verbose, failfast):
+#     """
+#     Internal function to load a module from a single app.
+#     """
+#     module_name = '%s.%s' % (app, modname)
+#     # the module *should* exist - raise an error if it doesn't
+#     app_mod = import_module(app)
+#     try:
+#         # imp.find_module(modname, app_mod.__path__ if hasattr(app_mod, '__path__') else None)
+#         spec = importlib.util.find_spec(modname, app_mod.__path__ if hasattr(app_mod, '__path__') else None)
+#         if spec is None:
+#             raise ImportError(f"Module {modname} not found")
+#     except ImportError:
+#         # this ImportError will be due to the module not existing
+#         # so here we can silently ignore it.  But an ImportError
+#         # when we import_module() should not be ignored
+#         if failfast:
+#             raise
+#         elif verbose:
+#             print(u"Could not find %r from %r" % (modname, app)) # changed
+#             traceback.print_exc() # changed
+#         return None
+
+#     module = import_module(module_name)
+
+#     if verbose:
+#         print(u"Loaded %r from %r" % (modname, app))
+#     return module
+
+
 def get_module(app, modname, verbose, failfast):
     """
     Internal function to load a module from a single app.
     """
-    module_name = '%s.%s' % (app, modname)
-    # the module *should* exist - raise an error if it doesn't
-    app_mod = import_module(app)
+    module_name = f"{app}.{modname}"  # Fully qualified module name
     try:
-        # imp.find_module(modname, app_mod.__path__ if hasattr(app_mod, '__path__') else None)
-        spec = importlib.util.find_spec(modname, app_mod.__path__ if hasattr(app_mod, '__path__') else None)
+        # Ensure the app module can be imported
+        app_mod = import_module(app)
+
+        # Check for the module spec
+        spec = importlib.util.find_spec(module_name)
         if spec is None:
-            raise ImportError(f"Module {modname} not found")
-    except ImportError:
-        # this ImportError will be due to the module not existing
-        # so here we can silently ignore it.  But an ImportError
-        # when we import_module() should not be ignored
+            raise ImportError(f"Module {module_name} not found")
+
+        # Import the module
+        module = import_module(module_name)
+
+        if verbose:
+            print(f"Loaded {modname!r} from {app!r}")
+        return module
+    except ImportError as e:
+        # Handle the error gracefully if failfast is False
         if failfast:
             raise
-        elif verbose:
-            print(u"Could not find %r from %r" % (modname, app)) # changed
-            traceback.print_exc() # changed
+        if verbose:
+            print(f"Could not find {modname!r} from {app!r}")
+            traceback.print_exc()
         return None
-
-    module = import_module(module_name)
-
-    if verbose:
-        print(u"Loaded %r from %r" % (modname, app))
-    return module
 
 
 def load(modname, verbose=False, failfast=False):
