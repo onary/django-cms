@@ -9,13 +9,13 @@ from django.contrib.admin.utils import get_deleted_objects
 from django.contrib.sites.shortcuts import get_current_site
 from django.core.exceptions import PermissionDenied
 from django.db import router, transaction
-from django.http import (
-    HttpResponse,
-    HttpResponseBadRequest,
-    HttpResponseForbidden,
-    HttpResponseNotFound,
-    HttpResponseRedirect,
-)
+# from django.http import (
+#     HttpResponse,
+#     HttpResponseBadRequest,
+#     HttpResponseForbidden,
+#     HttpResponseNotFound,
+#     HttpResponseRedirect,
+# )
 from django.shortcuts import get_list_or_404, get_object_or_404, render
 from django.template.response import TemplateResponse
 import six
@@ -52,9 +52,9 @@ from cms.utils.urlutils import admin_reverse
 
 from django.urls import path
 from django.contrib.admin.utils import NestedObjects
-from django.contrib.sites.shortcuts import get_current_site
-from django.core.exceptions import PermissionDenied
-from django.db import router, transaction
+# from django.contrib.sites.shortcuts import get_current_site
+# from django.core.exceptions import PermissionDenied
+# from django.db import router, transaction
 from django.http import (
     HttpResponse,
     HttpResponseBadRequest,
@@ -63,21 +63,21 @@ from django.http import (
     HttpResponseRedirect,
     JsonResponse,
 )
-from django.shortcuts import get_object_or_404, render
-from django.template.response import TemplateResponse
-from django.utils.decorators import method_decorator
-from django.utils.encoding import force_str
-from django.utils.translation import gettext as _
-from django.views.decorators.clickjacking import xframe_options_sameorigin
-from django.views.decorators.http import require_POST
+# from django.shortcuts import get_object_or_404, render
+# from django.template.response import TemplateResponse
+# from django.utils.decorators import method_decorator
+# from django.utils.encoding import force_str
+# from django.utils.translation import gettext as _
+# from django.views.decorators.clickjacking import xframe_options_sameorigin
+# from django.views.decorators.http import require_POST
 
-from cms.models.placeholdermodel import Placeholder
-from cms.models.pluginmodel import CMSPlugin
-from cms.plugin_pool import plugin_pool
-from cms.utils import copy_plugins, get_language_from_request, reorder_plugins
-from cms.utils.plugins import has_reached_plugin_limit, requires_reload
-from cms.utils.urlutils import admin_reverse
-from cms import operations
+# from cms.models.placeholdermodel import Placeholder
+# from cms.models.pluginmodel import CMSPlugin
+# from cms.plugin_pool import plugin_pool
+# from cms.utils import copy_plugins, get_language_from_request, reorder_plugins
+# from cms.utils.plugins import has_reached_plugin_limit, requires_reload
+# from cms.utils.urlutils import admin_reverse
+# from cms import operations
 
 
 
