@@ -20,7 +20,7 @@ from cms.utils.conf import get_cms_setting, get_site_id
 from cms.utils.django_load import iterload_objects
 from cms.utils.permissions import has_plugin_permission
 from cms.utils.placeholder import get_toolbar_plugin_struct, restore_sekizai_context
- 
+
 
 DEFAULT_PLUGIN_CONTEXT_PROCESSORS = (
     plugin_meta_context_processor,
@@ -214,6 +214,8 @@ class ContentRenderer(object):
             template=template,
             lang=language,
         )
+        print('in ContentRenderer')
+        print('plugins:', plugins)
 
         if plugins:
             plugin_content = self.render_plugins(
