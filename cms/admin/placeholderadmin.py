@@ -386,7 +386,8 @@ class PlaceholderAdminMixin(object):
                 placeholder=plugin.placeholder,
                 tree_order=tree_order,
             )
-        return response
+        # return response
+        return HttpResponse(response)
 
     @method_decorator(require_POST)
     @xframe_options_sameorigin
@@ -659,7 +660,8 @@ class PlaceholderAdminMixin(object):
                 new_plugin=plugin,
                 placeholder=plugin.placeholder,
             )
-        return response
+        # return response
+        return HttpResponse(response)
 
     @method_decorator(require_POST)
     @xframe_options_sameorigin
