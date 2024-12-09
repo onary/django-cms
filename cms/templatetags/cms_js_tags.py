@@ -44,7 +44,7 @@ def render_placeholder_toolbar_js(placeholder, render_language, content_renderer
     plugin_types = [cls.__name__ for cls in plugin_pool.get_all_plugins(slot, page)]
     allowed_plugins = plugin_types + plugin_pool.get_system_plugins()
 
-    print('allowed_plugins', allowed_plugins)
+    # print('allowed_plugins', allowed_plugins)
 
     get_toolbar_js = functools.partial(
         get_plugin_toolbar_js,
