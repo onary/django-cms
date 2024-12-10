@@ -3,7 +3,7 @@ from __future__ import unicode_literals
 
 from django.db import migrations
 
-from . import IrreversibleMigration
+# from . import IrreversibleMigration
 
 
 def unpublish_never_published_pages(apps, schema_editor):
@@ -49,7 +49,7 @@ def set_page_nodes(apps, schema_editor):
             public_pages.filter(pk=draft_page.publisher_public_id).update(node=draft_page.node)
 
 
-class Migration(IrreversibleMigration):
+class Migration(migrations.Migration):
 
     dependencies = [
         ('cms', '0018_create_pagenode'),

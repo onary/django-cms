@@ -6,10 +6,10 @@ import django.contrib.auth.models
 from django.db import migrations, models
 import django.db.models.deletion
 
-from . import IrreversibleMigration
+# from . import IrreversibleMigration
 
 
-class Migration(IrreversibleMigration):
+class Migration(migrations.Migration):
 
     dependencies = [
         ('cms', '0019_set_pagenode'),
