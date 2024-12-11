@@ -147,7 +147,7 @@ class StructureBoard {
 
         // add drag & drop functionality
         // istanbul ignore next
-        $('.cms-draggable:not(.cms-drag-disabled)').one(
+        $('.cms-draggable').one(
             'pointerover.cms.drag',
             once(() => {
                 $('.cms-draggable').off('pointerover.cms.drag');

@@ -1,4 +1,3 @@
-import json
 import uuid
 import warnings
 from urllib.parse import parse_qsl, urlparse
@@ -8,7 +7,7 @@ from django.contrib import admin
 from django.contrib.admin.helpers import AdminForm
 from django.contrib.admin.utils import get_deleted_objects
 from django.core.exceptions import PermissionDenied
-from django.db import models, transaction
+from django.db import transaction
 from django.http import (
     HttpResponse,
     HttpResponseBadRequest,
@@ -18,7 +17,7 @@ from django.http import (
 )
 from django.shortcuts import get_list_or_404, get_object_or_404, render
 from django.template.response import TemplateResponse
-from django.urls import include, re_path
+from django.urls import re_path
 from django.utils.decorators import method_decorator
 from django.utils.encoding import force_str
 from django.utils.html import conditional_escape
@@ -33,10 +32,9 @@ from cms.exceptions import PluginLimitReached
 from cms.models.placeholdermodel import Placeholder
 from cms.models.placeholderpluginmodel import PlaceholderReference
 from cms.models.pluginmodel import CMSPlugin
-from cms.plugin_base import CMSPluginBase
 from cms.plugin_pool import plugin_pool
 from cms.signals import post_placeholder_operation, pre_placeholder_operation
-from cms.toolbar.utils import get_plugin_tree
+from cms.toolbar.utils import get_plugin_tree_as_json
 from cms.utils import get_current_site
 from cms.utils.compat.warnings import RemovedInDjangoCMS50Warning
 from cms.utils.conf import get_cms_setting
@@ -81,29 +79,54 @@ def _instance_overrides_method(base, instance, method_name):
     return unbound_method != bound_method
 
 
-class BaseEditableAdminMixin:
+class FrontendEditableAdminMixin:
     """
-    Base class for FrontendEditableAdminMixin to be re-used by
-    PlaceholderAdmin
+    Adding ``FrontendEditableAdminMixin`` to  models admin class allows to open that admin
+    in the frontend by double-clicking on fields rendered with the ``render_model`` template
+    tag.
     """
-    @xframe_options_sameorigin
+    frontend_editable_fields = []
+
+    def get_urls(self):
+        """
+        Register the url for the single field edit view
+        """
+        info = "%s_%s" % (self.model._meta.app_label, self.model._meta.model_name)
+        def pat(regex, fn):
+            return re_path(regex, self.admin_site.admin_view(fn), name="%s_%s" % (info, fn.__name__))
+        url_patterns = [
+            pat(r'edit-field/(%s)/([a-z\-]+)/$' % SLUG_REGEXP, self.edit_field),
+        ]
+        return url_patterns + super().get_urls()
+
+    def _get_object_for_single_field(self, object_id, language):
+        # Quick and dirty way to retrieve objects for django-hvad
+        # Cleaner implementation will extend this method in a child mixin
+        try:
+            # First see if the model uses the admin manager pattern from cms.models.manager.ContentAdminManager
+            manager = self.model.admin_manager
+        except AttributeError:
+            # If not, use the default manager
+            manager = self.model.objects
+        try:
+            return manager.language(language).get(pk=object_id)
+        except AttributeError:
+            return manager.get(pk=object_id)
+
     def edit_field(self, request, object_id, language):
-        """Endpoint which manages frontend-editable fields"""
         obj = self._get_object_for_single_field(object_id, language)
         opts = obj.__class__._meta
         saved_successfully = False
         cancel_clicked = request.POST.get("_cancel", False)
         raw_fields = request.GET.get("edit_fields")
-        admin_obj = self._get_model_admin(obj)
-        allowed_fields = getattr(admin_obj, "frontend_editable_fields", [])
-        fields = [field for field in raw_fields.split(",") if field in allowed_fields]
+        fields = [field for field in raw_fields.split(",") if field in self.frontend_editable_fields]
         if not fields:
             context = {
                 'opts': opts,
                 'message': _("Field %s not found") % raw_fields
             }
             return render(request, 'admin/cms/page/plugin/error_form.html', context)
-        if not request.user.has_perm(f"{admin_obj.model._meta.app_label}.change_{admin_obj.model._meta.model_name}"):
+        if not request.user.has_perm(f"{self.model._meta.app_label}.change_{self.model._meta.model_name}"):
             context = {
                 'opts': opts,
                 'message': _("You do not have permission to edit this item")
@@ -111,18 +134,17 @@ class BaseEditableAdminMixin:
             return render(request, 'admin/cms/page/plugin/error_form.html', context)
             # Dynamically creates the form class with only `field_name` field
         # enabled
-        form_class = admin_obj.get_form(request, obj, fields=fields)
+        form_class = self.get_form(request, obj, fields=fields)
         if not cancel_clicked and request.method == 'POST':
             form = form_class(instance=obj, data=request.POST)
             if form.is_valid():
-                new_object = form.save(commit=False)
-                admin_obj.save_model(request, new_object, form, change=True)  # Call save model like the admin does
+                form.save()
                 saved_successfully = True
         else:
             form = form_class(instance=obj)
         admin_form = AdminForm(form, fieldsets=[(None, {'fields': fields})], prepopulated_fields={},
                                model_admin=self)
-        media = admin_obj.media + admin_form.media
+        media = self.media + admin_form.media
         context = {
             'CMS_MEDIA_URL': get_cms_setting('MEDIA_URL'),
             'title': opts.verbose_name,
@@ -145,50 +167,8 @@ class BaseEditableAdminMixin:
             })
             return render(request, 'admin/cms/page/plugin/confirm_form.html', context)
         if not cancel_clicked and request.method == 'POST' and saved_successfully:
-            if isinstance(admin_obj, CMSPluginBase):
-                # Update the structure board by populating the data bridge
-                return admin_obj.render_close_frame(request, obj)
             return render(request, 'admin/cms/page/plugin/confirm_form.html', context)
         return render(request, 'admin/cms/page/plugin/change_form.html', context)
-
-
-class FrontendEditableAdminMixin(BaseEditableAdminMixin):
-    """
-    Adding ``FrontendEditableAdminMixin`` to  models admin class allows to open that admin
-    in the frontend by double-clicking on fields rendered with the ``render_model`` template
-    tag.
-    """
-    def get_urls(self) -> list[str]:
-        """
-        Register the url for the edit field view
-        """
-        info = f"{self.model._meta.app_label}_{self.model._meta.model_name}"
-
-        def pat(regex, fn):
-            return re_path(regex, self.admin_site.admin_view(fn), name=f"{info}_{fn.__name__}")
-        url_patterns = [
-            pat(r'edit-field/(%s)/([a-z\-]+)/$' % SLUG_REGEXP, self.edit_field),
-        ]
-        return url_patterns + super().get_urls()
-
-    def _get_model_admin(self, obj: models.Model) -> admin.ModelAdmin:
-        # FrontendEditableAdminMixin needs to be added to the model's model admin class.
-        # Hence, the relevant admin is the model admin itself.
-        return self
-
-    def _get_object_for_single_field(self, object_id: int, language: str) -> models.Model:
-        # Quick and dirty way to retrieve objects for django-hvad
-        # Cleaner implementation will extend this method in a child mixin
-        try:
-            # First see if the model uses the admin manager pattern from cms.models.manager.ContentAdminManager
-            manager = self.model.admin_manager
-        except AttributeError:
-            # If not, use the default manager
-            manager = self.model.objects
-        try:
-            return manager.language(language).get(pk=object_id)
-        except AttributeError:
-            return manager.get(pk=object_id)
 
 
 class PlaceholderAdminMixinBase(forms.MediaDefiningClass):
@@ -215,10 +195,7 @@ class PlaceholderAdminMixin(metaclass=PlaceholderAdminMixinBase):
     pass
 
 
-@admin.register(Placeholder)
-class PlaceholderAdmin(BaseEditableAdminMixin, admin.ModelAdmin):
-    """Placeholder admin manages placeholders and their plugins, as well as the preview, edit, and
-    structure endpoints."""
+class PlaceholderAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         # Placeholders are created by the system
@@ -242,20 +219,17 @@ class PlaceholderAdmin(BaseEditableAdminMixin, admin.ModelAdmin):
         # but the admin's delete view is not available for placeholders.
         raise PermissionDenied
 
-    def get_urls(self) -> list[str]:
+    def get_urls(self):
         """
         Register the plugin specific urls (add/edit/copy/remove/move)
         """
-        info = f"{self.model._meta.app_label}_{self.model._meta.model_name}"
-
+        info = "%s_%s" % (self.model._meta.app_label, self.model._meta.model_name)
         def pat(regex, fn):
-            return re_path(regex, self.admin_site.admin_view(fn), name=f"{info}_{fn.__name__}")
+            return re_path(regex, self.admin_site.admin_view(fn), name="%s_%s" % (info, fn.__name__))
         url_patterns = [
-            re_path(r'^cms_wizard/', include('cms.wizards.urls')),
             pat(r'^copy-plugins/$', self.copy_plugins),
             pat(r'^add-plugin/$', self.add_plugin),
             pat(r'^edit-plugin/([0-9]+)/$', self.edit_plugin),
-            pat(r'^edit-plugin/([0-9]+)/([a-z\-]+)/$', self.edit_field),
             pat(r'^delete-plugin/([0-9]+)/$', self.delete_plugin),
             pat(r'^clear-placeholder/([0-9]+)/$', self.clear_placeholder),
             pat(r'^move-plugin/$', self.move_plugin),
@@ -266,18 +240,6 @@ class PlaceholderAdmin(BaseEditableAdminMixin, admin.ModelAdmin):
             pat(r'^object/([0-9]+)/preview/([0-9]+)/$', render_object_preview),
         ]
         return url_patterns
-
-    def _get_object_for_single_field(self, object_id: int, language: str) -> CMSPlugin:
-        # For BaseEditableAdminMixin: This (private) method retrieves the corresponding CMSPlugin and
-        # downcasts it to the appropriate plugin model. language is ignored. This provides the plugin for
-        # edit_field"""
-        plugin = get_object_or_404(CMSPlugin, pk=object_id)  # Returns a CMSPlugin instance
-        return plugin.get_bound_plugin()  # Returns the plugin model instance of the appropriate type
-
-    def _get_model_admin(self, obj: CMSPlugin) -> admin.ModelAdmin:
-        # For BaseEditableAdminMixin: This (private) method retrieves the model admin for the plugin model
-        # which is the plugin instance itself.
-        return obj.get_plugin_class_instance(admin=self.admin_site)
 
     def _get_operation_language(self, request):
         # Unfortunately the ?language GET query
@@ -495,8 +457,8 @@ class PlaceholderAdmin(BaseEditableAdminMixin, admin.ModelAdmin):
                 source_placeholder,
                 target_placeholder,
             )
-        data = get_plugin_tree(request, new_plugins)
-        return HttpResponse(json.dumps(data), content_type='application/json')
+        data = get_plugin_tree_as_json(request, new_plugins)
+        return HttpResponse(data, content_type='application/json')
 
     def _copy_plugin_to_clipboard(self, request, target_placeholder):
         source_language = request.POST['source_language']
@@ -778,8 +740,8 @@ class PlaceholderAdmin(BaseEditableAdminMixin, admin.ModelAdmin):
         if new_plugin and fetch_tree:
             root = (new_plugin.parent or new_plugin)
             new_plugins = [root] + list(root.get_descendants())
-        data = get_plugin_tree(request, new_plugins)
-        return HttpResponse(json.dumps(data), content_type='application/json')
+        data = get_plugin_tree_as_json(request, new_plugins)
+        return HttpResponse(data, content_type='application/json')
 
     def _paste_plugin(self, request, plugin, target_language,
                       target_placeholder, target_position, target_parent=None):
@@ -1161,3 +1123,6 @@ class PlaceholderAdmin(BaseEditableAdminMixin, admin.ModelAdmin):
         }
         request.current_app = self.admin_site.name
         return TemplateResponse(request, "admin/cms/page/plugin/delete_confirmation.html", context)
+
+
+admin.site.register(Placeholder, PlaceholderAdmin)

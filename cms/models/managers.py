@@ -10,16 +10,20 @@ from treebeard.mp_tree import MP_NodeManager
 
 from cms.constants import ROOT_USER_LEVEL
 from cms.exceptions import NoPermissionsException
-from cms.models.query import PageQuerySet
+from cms.models.query import PageNodeQuerySet, PageQuerySet
 from cms.utils.i18n import get_fallback_languages
 
 
-class PageManager(MP_NodeManager):
+class PageManager(models.Manager):
 
     def get_queryset(self):
         """Change standard model queryset to our own.
         """
         return PageQuerySet(self.model)
+
+    # !IMPORTANT: following methods always return access to draft instances,
+    # take care on what you do one them. use Page.objects.public() for accessing
+    # the published page versions
 
     # Just some of the queryset methods are implemented here, access queryset
     # for more getting more supporting methods.
@@ -69,6 +73,16 @@ class PageManager(MP_NodeManager):
         return qs.distinct()
 
 
+class PageNodeManager(MP_NodeManager):
+
+    def get_queryset(self):
+        """Sets the custom queryset as the default."""
+        return PageNodeQuerySet(self.model).order_by('path')
+
+    def get_for_site(self, site):
+        return self.filter(site=site)
+
+
 class WithUserMixin:
     """empty mixin adds with_user """
     def with_user(self, user):
@@ -77,7 +91,7 @@ class WithUserMixin:
 
 class PageUrlManager(WithUserMixin, models.Manager):
     def get_for_site(self, site, **kwargs):
-        kwargs['page__site'] = site
+        kwargs['page__node__site'] = site
         return self.filter(**kwargs)
 
 
@@ -216,14 +230,14 @@ class PagePermissionManager(BasicPagePermissionManager):
         Provide a single point of entry for deciding whether any given global
         permission exists.
         """
-        query = {perm: True, 'page__site': site_id}
+        query = {perm: True, 'page__node__site': site_id}
         return self.with_user(user).filter(**query)
 
     def get_with_site(self, user, site_id):
-        return self.with_user(user).filter(page__site=site_id)
+        return self.with_user(user).filter(page__node__site=site_id)
 
     def user_has_permissions(self, user, site_id, perms):
-        queryset = self.with_user(user).filter(page__site=site_id)
+        queryset = self.with_user(user).filter(page__node__site=site_id)
         queries = [Q(**{perm: True}) for perm in perms]
         return queryset.filter(functools.reduce(operator.or_, queries)).exists()
 
@@ -296,13 +310,13 @@ class PagePermissionManager(BasicPagePermissionManager):
         from cms.models import PermissionTuple
         allow_list = Q()
         for perm_tuple in get_change_permissions_perm_tuples(user, site, check_global=False):
-            allow_list |= PermissionTuple(perm_tuple).allow_list("page")
+            allow_list |= PermissionTuple(perm_tuple).allow_list("page__node")
 
         # get permission set, but without objects targeting user, or any group
         # in which he can be
         qs = self.filter(
             allow_list,
-            page__depth__gte=user_level,
+            page__node__depth__gte=user_level,
         )
         qs = qs.exclude(user=user).exclude(group__user=user)
         return qs
@@ -325,19 +339,19 @@ class PagePermissionManager(BasicPagePermissionManager):
             ACCESS_PAGE_AND_DESCENDANTS,
         )
 
-        paths = page.get_ancestor_paths()
+        paths = page.node.get_ancestor_paths()
 
         # Ancestors
         query = (
-            Q(page__path__in=paths) & (Q(grant_on=ACCESS_DESCENDANTS) | Q(grant_on=ACCESS_PAGE_AND_DESCENDANTS))
+            Q(page__node__path__in=paths) & (Q(grant_on=ACCESS_DESCENDANTS) | Q(grant_on=ACCESS_PAGE_AND_DESCENDANTS))
         )
 
-        if page.parent:
+        if page.parent_page:
             # Direct parent
             query |= (
-                Q(page=page.parent) & (Q(grant_on=ACCESS_CHILDREN) | Q(grant_on=ACCESS_PAGE_AND_CHILDREN))
+                Q(page=page.parent_page) & (Q(grant_on=ACCESS_CHILDREN) | Q(grant_on=ACCESS_PAGE_AND_CHILDREN))
             )
         query |= Q(page=page) & (
             Q(grant_on=ACCESS_PAGE_AND_DESCENDANTS) | Q(grant_on=ACCESS_PAGE_AND_CHILDREN) | Q(grant_on=ACCESS_PAGE)
         )
-        return self.filter(query).order_by('page__depth')
+        return self.filter(query).order_by('page__node__depth')

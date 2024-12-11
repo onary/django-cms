@@ -151,9 +151,7 @@ class PermissionModeratorTests(CMSTestCase):
                     {
                         'plugin_type': 'TextPlugin',
                         'values': {
-                            'body': 'Lorem ipsum dolor sit amet, consectetur adipisicing elit. Culpa, repellendus, '
-                                    'delectus, quo quasi ullam inventore quod quam aut voluptatum aliquam voluptatibus '
-                                    'harum officiis officia nihil minus unde accusamus dolorem repudiandae.'
+                            'body': 'Lorem ipsum dolor sit amet, consectetur adipisicing elit. Culpa, repellendus, delectus, quo quasi ullam inventore quod quam aut voluptatum aliquam voluptatibus harum officiis officia nihil minus unde accusamus dolorem repudiandae.'
                         },
                     },
                 ]

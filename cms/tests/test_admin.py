@@ -26,6 +26,7 @@ from cms.test_utils.testcases import (
     URL_CMS_PAGE_PUBLISHED,
     CMSTestCase,
 )
+from cms.utils.compat import DJANGO_2_2
 from cms.utils.conf import get_cms_setting
 from cms.utils.i18n import get_language_list
 from cms.utils.urlutils import admin_reverse
@@ -138,7 +139,7 @@ class AdminTestCase(AdminTestsBase):
         add_plugin(body, 'TextPlugin', 'en', body='text')
         with self.login_user_context(admin_user):
             data = {'post': 'yes'}
-            response = self.client.post(URL_CMS_PAGE_DELETE % page.pk, data, follow=True)
+            response = self.client.post(URL_CMS_PAGE_DELETE % page.pk, data)
             self.assertRedirects(response, self.get_pages_admin_list_uri('en'))
 
     def test_delete_diff_language(self):
@@ -150,8 +151,7 @@ class AdminTestCase(AdminTestsBase):
         add_plugin(body, 'TextPlugin', 'en', body='text')
         with self.login_user_context(admin_user):
             data = {'post': 'yes'}
-            response = self.client.post(URL_CMS_PAGE_DELETE % page.pk, data, follow=True)
-            # follow=True, since page changelist redirects to page content changelist
+            response = self.client.post(URL_CMS_PAGE_DELETE % page.pk, data)
             self.assertRedirects(response, self.get_pages_admin_list_uri('en'))
 
     def test_search_fields(self):
@@ -165,7 +165,7 @@ class AdminTestCase(AdminTestsBase):
                 if not admin_instance.search_fields:
                     continue
                 url = admin_reverse('cms_%s_changelist' % model._meta.model_name)
-                response = self.client.get('%s?q=1' % url, follow=True)  # Page redirects to PageContent
+                response = self.client.get('%s?q=1' % url)
                 errmsg = response.content
                 self.assertEqual(response.status_code, 200, errmsg)
 
@@ -231,9 +231,8 @@ class AdminTestCase(AdminTestsBase):
         second_level_page_top = create_page(
             'level21', "nav_playground.html", "en", created_by=admin_user, parent=first_level_page
         )
-        first_level_page.refresh_from_db()
         second_level_page_bottom = create_page(
-            'level22', "nav_playground.html", "en", created_by=admin_user, parent=first_level_page
+            'level22', "nav_playground.html", "en", created_by=admin_user, parent=self.reload(first_level_page)
         )
         third_level_page = create_page(
             'level3', "nav_playground.html", "en", created_by=admin_user, parent=second_level_page_top
@@ -373,19 +372,6 @@ class AdminTests(AdminTestsBase):
     def get_page(self):
         return self.page
 
-    def test_admin_index(self):
-        endpoint = admin_reverse("index")
-        endpoint_page = admin_reverse("cms_page_changelist")
-        endpoint_page_content = admin_reverse("cms_pagecontent_changelist")
-
-        admin_user = self.get_admin()
-        with self.login_user_context(admin_user):
-            response = self.client.get(endpoint)
-            self.assertEqual(response.status_code, 200)
-
-        self.assertNotContains(response, endpoint_page)
-        self.assertContains(response, endpoint_page_content)
-
     def test_change_innavigation(self):
         page = self.get_page()
         content = self.get_pagecontent_obj(page, 'en')
@@ -511,7 +497,7 @@ class PluginPermissionTests(AdminTestsBase):
         return admin.site._registry[Page]
 
     def _give_permission(self, user, model, permission_type, save=True):
-        codename = f'{permission_type}_{model._meta.object_name.lower()}'
+        codename = '%s_%s' % (permission_type, model._meta.object_name.lower())
         user.user_permissions.add(Permission.objects.get(codename=codename))
 
     def _give_page_permission_rights(self, user):
@@ -557,7 +543,7 @@ class PluginPermissionTests(AdminTestsBase):
             self.client.login(username='test', password='test')
 
         self._give_permission(normal_guy, Text, 'change')
-        endpoint = '{}edit-plugin/{}/'.format(admin_reverse('cms_placeholder_edit_plugin', args=[plugin.id]), plugin.id)
+        endpoint = '%sedit-plugin/%s/' % (admin_reverse('cms_placeholder_edit_plugin', args=[plugin.id]), plugin.id)
         endpoint += '?cms_path=/en/'
         response = self.client.post(endpoint, dict())
 
@@ -596,7 +582,7 @@ class AdminFormsTests(AdminTestsBase):
         new_page_data = {
             'title': 'Title',
             'slug': 'slug',
-            'parent_page': parent_page.pk,
+            'parent_node': parent_page.node.pk,
         }
         with self.login_user_context(superuser):
             # Invalid parent
@@ -617,7 +603,7 @@ class AdminFormsTests(AdminTestsBase):
         new_page_data = {
             'title': 'Title',
             'slug': 'home',
-            'parent_page': page1.pk,
+            'parent_node': page1.node.pk,
         }
         endpoint = self.get_page_add_uri('en')
 
@@ -641,8 +627,10 @@ class AdminFormsTests(AdminTestsBase):
             response = self.client.post(endpoint, new_page_data)
             expected_error = '<ul class="errorlist"><li>Enter a valid “slug” consisting of letters, numbers, ' \
                              'underscores or hyphens.</li></ul>'
+            expected_error_22 = '<ul class="errorlist"><li>Enter a valid &#39;slug&#39; consisting of letters, ' \
+                               'numbers, underscores or hyphens.</li></ul>'
             self.assertEqual(response.status_code, 200)
-            self.assertContains(response, expected_error, html=True)
+            self.assertContains(response, expected_error_22 if DJANGO_2_2 else expected_error, html=True)
 
         page2 = api.create_page("test", get_cms_setting('TEMPLATES')[0][0], "en")
         new_page_data = {
@@ -882,7 +870,8 @@ class AdminPageEditContentSizeTests(AdminTestsBase):
                 foundcount = text.count(USER_NAME)
                 # 2 forms contain usernames as options
                 self.assertEqual(foundcount, 2,
-                                 f"Username {USER_NAME} appeared {foundcount} times in response.content, expected 2 times")
+                                 "Username %s appeared %s times in response.content, expected 2 times" % (
+                                     USER_NAME, foundcount))
 
 
 class AdminPageTreeTests(AdminTestsBase):
@@ -917,8 +906,7 @@ class AdminPageTreeTests(AdminTestsBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(data['status'], 200)
-        alpha.refresh_from_db()
-        self.assertEqual(alpha.get_descendants().count(), 1)
+        self.assertEqual(alpha.node._reload().get_descendants().count(), 1)
 
         # Current structure:
         #   <root>
@@ -941,10 +929,8 @@ class AdminPageTreeTests(AdminTestsBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(data['status'], 200)
-        alpha.refresh_from_db()
-        self.assertEqual(alpha.get_descendants().count(), 2)
-        beta.refresh_from_db()
-        self.assertEqual(beta.get_descendants().count(), 1)
+        self.assertEqual(alpha.node._reload().get_descendants().count(), 2)
+        self.assertEqual(beta.node._reload().get_descendants().count(), 1)
 
         # Current structure:
         #   <root>
@@ -967,12 +953,9 @@ class AdminPageTreeTests(AdminTestsBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(data['status'], 200)
-        alpha.refresh_from_db()
-        self.assertEqual(alpha.get_descendants().count(), 3)
-        beta.refresh_from_db()
-        self.assertEqual(beta.get_descendants().count(), 2)
-        gamma.refresh_from_db()
-        self.assertEqual(gamma.get_descendants().count(), 1)
+        self.assertEqual(alpha.node._reload().get_descendants().count(), 3)
+        self.assertEqual(beta.node._reload().get_descendants().count(), 2)
+        self.assertEqual(gamma.node._reload().get_descendants().count(), 1)
 
         # Current structure:
         #   <root>
@@ -994,12 +977,9 @@ class AdminPageTreeTests(AdminTestsBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(data['status'], 200)
-        alpha.refresh_from_db()
-        self.assertEqual(alpha.get_descendants().count(), 0)
-        beta.refresh_from_db()
-        self.assertEqual(beta.get_descendants().count(), 2)
-        gamma.refresh_from_db()
-        self.assertEqual(gamma.get_descendants().count(), 1)
+        self.assertEqual(alpha.node._reload().get_descendants().count(), 0)
+        self.assertEqual(beta.node._reload().get_descendants().count(), 2)
+        self.assertEqual(gamma.node._reload().get_descendants().count(), 1)
 
         # Current structure:
         #   <root>
@@ -1022,12 +1002,9 @@ class AdminPageTreeTests(AdminTestsBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(data['status'], 200)
-        alpha.refresh_from_db()
-        self.assertEqual(alpha.get_descendants().count(), 3)
-        beta.refresh_from_db()
-        self.assertEqual(beta.get_descendants().count(), 2)
-        gamma.refresh_from_db()
-        self.assertEqual(gamma.get_descendants().count(), 1)
+        self.assertEqual(alpha.node._reload().get_descendants().count(), 3)
+        self.assertEqual(beta.node._reload().get_descendants().count(), 2)
+        self.assertEqual(gamma.node._reload().get_descendants().count(), 1)
 
         # Current structure:
         #   <root>
@@ -1049,12 +1026,9 @@ class AdminPageTreeTests(AdminTestsBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(data['status'], 200)
-        alpha.refresh_from_db()
-        self.assertEqual(alpha.get_descendants().count(), 1)
-        beta.refresh_from_db()
-        self.assertEqual(beta.get_descendants().count(), 0)
-        gamma.refresh_from_db()
-        self.assertEqual(gamma.get_descendants().count(), 1)
+        self.assertEqual(alpha.node._reload().get_descendants().count(), 1)
+        self.assertEqual(beta.node._reload().get_descendants().count(), 0)
+        self.assertEqual(gamma.node._reload().get_descendants().count(), 1)
 
         # Current structure:
         #   <root>
@@ -1076,12 +1050,9 @@ class AdminPageTreeTests(AdminTestsBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(data['status'], 200)
-        alpha.refresh_from_db()
-        self.assertEqual(alpha.get_descendants().count(), 1)
-        beta.refresh_from_db()
-        self.assertEqual(beta.get_descendants().count(), 0)
-        gamma.refresh_from_db()
-        self.assertEqual(gamma.get_descendants().count(), 0)
+        self.assertEqual(alpha.node._reload().get_descendants().count(), 1)
+        self.assertEqual(beta.node._reload().get_descendants().count(), 0)
+        self.assertEqual(gamma.node._reload().get_descendants().count(), 0)
 
         # Current structure:
         #   <root>
@@ -1104,14 +1075,10 @@ class AdminPageTreeTests(AdminTestsBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(data['status'], 200)
-        alpha.refresh_from_db()
-        self.assertEqual(alpha.get_descendants().count(), 1)
-        beta.refresh_from_db()
-        self.assertEqual(beta.get_descendants().count(), 0)
-        gamma.refresh_from_db()
-        self.assertEqual(gamma.get_descendants().count(), 0)
-        delta.refresh_from_db()
-        self.assertEqual(delta.get_descendants().count(), 1)
+        self.assertEqual(alpha.node._reload().get_descendants().count(), 1)
+        self.assertEqual(beta.node._reload().get_descendants().count(), 0)
+        self.assertEqual(gamma.node._reload().get_descendants().count(), 0)
+        self.assertEqual(delta.node._reload().get_descendants().count(), 1)
 
         # Final structure:
         #   <root>
@@ -1155,7 +1122,7 @@ class AdminPageTreeTests(AdminTestsBase):
                 response = pagecontent_admin.get_tree(request)
                 self.assertContains(
                     response,
-                    f'href="{add_url}?parent_page={page[language].id}&language={language}"'
+                    f'href="{add_url}?parent_node={page[language].node_id}&language={language}"'
                 )
 
 

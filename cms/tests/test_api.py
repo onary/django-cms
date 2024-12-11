@@ -55,7 +55,7 @@ class PythonAPITests(CMSTestCase):
         if APP_MODULE in sys.modules:
             del sys.modules[APP_MODULE]
         apphooks = (
-            f'{APP_MODULE}.{APP_NAME}',
+            '%s.%s' % (APP_MODULE, APP_NAME),
         )
 
         with self.settings(CMS_APPHOOKS=apphooks):

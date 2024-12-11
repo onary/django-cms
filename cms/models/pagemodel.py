@@ -2,21 +2,22 @@ import warnings
 from logging import getLogger
 from os.path import join
 
-from django.contrib.auth import get_user_model
 from django.contrib.sites.models import Site
 from django.db import models
 from django.db.models import Prefetch
 from django.db.models.base import ModelState
 from django.db.models.functions import Concat
 from django.forms import model_to_dict
-from django.urls import NoReverseMatch, reverse
+from django.urls import reverse
 from django.utils.encoding import force_str
+from django.utils.functional import cached_property
 from django.utils.timezone import now
 from django.utils.translation import get_language, gettext_lazy as _, override as force_language
 from treebeard.mp_tree import MP_Node
 
 from cms import constants
-from cms.models.managers import PageManager, PageUrlManager
+from cms.exceptions import LanguageError
+from cms.models.managers import PageManager, PageNodeManager, PageUrlManager
 from cms.utils import i18n
 from cms.utils.compat.warnings import RemovedInDjangoCMS43Warning
 from cms.utils.conf import get_cms_setting
@@ -27,22 +28,7 @@ from menus.menu_pool import menu_pool
 logger = getLogger(__name__)
 
 
-class AdminCacheDict(dict):
-    """Dictionary that disallows setting individual items to prevent accidental cache corruption."""
-    def __setitem__(self, key, value):
-        raise ValueError("Do not set individual items in the admin cache dict. Use the clear_cache method instead.")
-
-
-class Page(MP_Node):
-    """
-    A ``Page`` is the basic unit of site structure in django CMS. The CMS uses a hierarchical page model: each page
-    stands in relation to other pages as parent, child or sibling. This hierarchy is managed by the `django-treebeard
-    <http://django-treebeard.readthedocs.io/en/latest/>`_ library.
-
-    A ``Page`` is an abstract entity. It does not have any content associated with it, nor does is provide any slugs to
-    build a URL. This is part of the model :class:`~cms.models.contentmodels.PageContent` and
-    :class:`~cms.models.pagemodel.PageUrl` respectively.
-    """
+class TreeNode(MP_Node):
 
     parent = models.ForeignKey(
         'self',
@@ -56,114 +42,27 @@ class Page(MP_Node):
         Site,
         on_delete=models.CASCADE,
         verbose_name=_("site"),
-        related_name='djangocms_pages',
+        related_name='djangocms_nodes',
         db_index=True,
-    )
-    created_by = models.CharField(
-        _("created by"),
-        max_length=constants.PAGE_USERNAME_MAX_LENGTH,
-        editable=False,
-    )
-    changed_by = models.CharField(
-        _("changed by"),
-        max_length=constants.PAGE_USERNAME_MAX_LENGTH,
-        editable=False,
-    )
-    creation_date = models.DateTimeField(auto_now_add=True)
-    changed_date = models.DateTimeField(auto_now=True)
-
-    #
-    # Please use toggle_in_navigation() instead of affecting this property
-    # directly so that the cms page cache can be invalidated as appropriate.
-    #
-    reverse_id = models.CharField(
-        _("id"),
-        max_length=40,
-        db_index=True,
-        blank=True,
-        null=True,
-        help_text=_("A unique identifier that is used with the page_url templatetag for linking to this page"),
-    )
-    navigation_extenders = models.CharField(
-        _("attached menu"),
-        max_length=80,
-        db_index=True,
-        blank=True,
-        null=True,
-    )
-    login_required = models.BooleanField(
-        _("login required"),
-        default=False,
-    )
-    is_home = models.BooleanField(
-        editable=False,
-        db_index=True,
-        default=False,
-    )
-    application_urls = models.CharField(
-        _("application"),
-        max_length=200,
-        blank=True,
-        null=True,
-        db_index=True,
-    )
-    application_namespace = models.CharField(
-        _("application instance name"),
-        max_length=200,
-        blank=True,
-        null=True,
-    )
-    is_page_type = models.BooleanField(
-        default=False,
-        help_text=_("Mark this page as a page type"),
     )
 
-    # Managers
-    objects = PageManager()
+    objects = PageNodeManager()
 
     class Meta:
-        default_permissions = ['add', 'change', 'delete']
-        permissions = [
-            ('view_page', 'Can view page'),
-            ('publish_page', 'Can publish page'),
-            ('edit_static_placeholder', 'Can edit static placeholders'),
-        ]
-        verbose_name = _("page")
-        verbose_name_plural = _("pages")
         app_label = 'cms'
-        ordering = ['path']
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.urls_cache = {}
-        #: Internal cache for page urls
-        self.page_content_cache = {}
-        #: Internal cache for page content objects visible publicly
-        self.admin_content_cache = AdminCacheDict()
-        #: Internal cache for page content objects visible in the admin (i.e. to staff users.)
-        #: Might be larger than the page_content_cache
+        ordering = ('path',)
+        default_permissions = []
 
     def __str__(self):
-        page_content = self.get_content_obj(get_language(), fallback=True)
-        if page_content:
-            title = page_content.menu_title or page_content.title
-        else:
-            title = _("No available title")
-        path = self.get_path(get_language(), fallback=True)
-        return force_str(title) + ("" if path is None else f" (/{path})")
+        return self.path
 
-    def __repr__(self):
-        display = f'<{self.__module__}.{self.__class__.__name__} id={self.pk} object at {hex(id(self))}>'
-        return display
+    @cached_property
+    def item(self):
+        return self.get_item()
 
-    @property
-    def node(self):
-        warnings.warn(
-            "The `node` has been removed from Page objects. Access the TreeNode attributes directly.",
-            RemovedInDjangoCMS43Warning,
-            stacklevel=2
-        )
-        return self
+    def get_item(self):
+        # Paving the way...
+        return Page.objects.get(node=self)
 
     @property
     def is_branch(self):
@@ -190,6 +89,13 @@ class Page(MP_Node):
             kwargs['parent_id'] = self.parent_id
         return super().add_sibling(*args, **kwargs)
 
+    def update(self, **data):
+        cls = self.__class__
+        cls.objects.filter(pk=self.pk).update(**data)
+
+        for field, value in data.items():
+            setattr(self, field, value)
+
     def get_cached_ancestors(self):
         if self._has_cached_hierarchy():
             return self._ancestors
@@ -200,22 +106,130 @@ class Page(MP_Node):
             return self._descendants
         return []
 
+    def _reload(self):
+        """
+        Reload a page node from the database
+        """
+        return self.__class__.objects.get(pk=self.pk)
+
+    def _has_cached_hierarchy(self):
+        return hasattr(self, '_descendants') and hasattr(self, '_ancestors')
+
+    def _set_hierarchy(self, nodes, ancestors=None):
+        if self.is_branch:
+            self._descendants = [
+                node for node in nodes
+                if node.path.startswith(self.path) and node.depth > self.depth
+            ]
+        else:
+            self._descendants = []
+
+        if self.is_root():
+            self._ancestors = []
+        else:
+            self._ancestors = ancestors
+
+        children = (node for node in self._descendants
+                    if node.depth == self.depth + 1)
+
+        for child in children:
+            child._set_hierarchy(self._descendants, ancestors=([self] + self._ancestors))
+
+
+class Page(models.Model):
+    """
+    A ``Page`` is the basic unit of site structure in django CMS. The CMS uses a hierarchical page model: each page
+    stands in relation to other pages as parent, child or sibling. This hierarchy is managed by the `django-treebeard
+    <http://django-treebeard.readthedocs.io/en/latest/>`_ library.
+
+    A ``Page`` also has language-specific properties - for example, it will have a title and a slug for each language
+    it exists in. These properties are managed by the :class:`~cms.models.contentmodel.PageContent` model.
+    """
+
+    created_by = models.CharField(
+        _("created by"), max_length=constants.PAGE_USERNAME_MAX_LENGTH,
+        editable=False)
+    changed_by = models.CharField(
+        _("changed by"), max_length=constants.PAGE_USERNAME_MAX_LENGTH,
+        editable=False)
+    creation_date = models.DateTimeField(auto_now_add=True)
+    changed_date = models.DateTimeField(auto_now=True)
+
+    #
+    # Please use toggle_in_navigation() instead of affecting this property
+    # directly so that the cms page cache can be invalidated as appropriate.
+    #
+    reverse_id = models.CharField(_("id"), max_length=40, db_index=True, blank=True, null=True, help_text=_(
+        "A unique identifier that is used with the page_url templatetag for linking to this page"))
+    navigation_extenders = models.CharField(_("attached menu"), max_length=80, db_index=True, blank=True, null=True)
+
+    login_required = models.BooleanField(_("login required"), default=False)
+    is_home = models.BooleanField(editable=False, db_index=True, default=False)
+    application_urls = models.CharField(_('application'), max_length=200, blank=True, null=True, db_index=True)
+    application_namespace = models.CharField(_('application instance name'), max_length=200, blank=True, null=True)
+    languages = models.CharField(max_length=255, editable=False, blank=True, null=True)
+
+    # Flag that marks a page as page-type
+    is_page_type = models.BooleanField(default=False)
+
+    node = models.ForeignKey(
+        'TreeNode',
+        related_name='cms_pages',
+        on_delete=models.CASCADE,
+    )
+
+    # Managers
+    objects = PageManager()
+
+    class Meta:
+        default_permissions = ('add', 'change', 'delete')
+        permissions = (
+            ('view_page', 'Can view page'),
+            ('publish_page', 'Can publish page'),
+            ('edit_static_placeholder', 'Can edit static placeholders'),
+        )
+        verbose_name = _('page')
+        verbose_name_plural = _('pages')
+        app_label = 'cms'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.urls_cache = {}
+        self.page_content_cache = {}
+        self.admin_content_cache = {}
+
+    def __str__(self):
+        try:
+            title = self.get_menu_title(fallback=True)
+        except LanguageError:
+            try:
+                title = self.pagecontent_set(manager="admin_manager").current()[0]
+            except IndexError:
+                title = None
+        if title is None:
+            title = ""
+        return force_str(title)
+
+    def __repr__(self):
+        display = f'<{self.__module__}.{self.__class__.__name__} id={self.pk} object at {hex(id(self))}>'
+        return display
+
+    def _clear_node_cache(self):
+        if Page.node.is_cached(self):
+            Page.node.field.delete_cached_value(self)
+
     def _clear_internal_cache(self):
         self.urls_cache = {}
         self.page_content_cache = {}
-        self.admin_content_cache = AdminCacheDict()
+        self.admin_content_cache = {}
+        self._clear_node_cache()
 
         if hasattr(self, '_prefetched_objects_cache'):
             del self._prefetched_objects_cache
 
-    @property
+    @cached_property
     def parent_page(self):
-        warnings.warn(
-            "Attribute `parent_page` is deprecated. Instead use the attribute `parent`.",
-            RemovedInDjangoCMS43Warning,
-            stacklevel=2
-        )
-        return self.parent
+        return self.get_parent_page()
 
     def has_valid_url(self, language):
         return self.urls.filter(language=language, path__isnull=False).exists()
@@ -236,7 +250,7 @@ class Page(MP_Node):
         try:
             old_home = self.__class__.objects.get(
                 is_home=True,
-                site=self.site_id,
+                node__site=self.node.site_id,
             )
         except self.__class__.DoesNotExist:
             old_home_tree = []
@@ -256,27 +270,6 @@ class Page(MP_Node):
         new_home_tree = self._remove_title_root_path()
         return (new_home_tree, old_home_tree)
 
-    def _has_cached_hierarchy(self):
-        return hasattr(self, '_descendants') and hasattr(self, '_ancestors')
-
-    def _set_hierarchy(self, pages, ancestors=None):
-        if self.is_branch:
-            self._descendants = [
-                page for page in pages
-                if page.path.startswith(self.path) and page.depth > self.depth
-            ]
-        else:
-            self._descendants = []
-
-        if self.is_root():
-            self._ancestors = []
-        else:
-            self._ancestors = ancestors
-
-        for child in self._descendants:
-            if child.depth == self.depth + 1:
-                child._set_hierarchy(self._descendants, ancestors=([self] + self._ancestors))
-
     def _get_path_sql_value(self, base_path=''):
         if base_path:
             new_path = Concat(
@@ -293,7 +286,8 @@ class Page(MP_Node):
         return new_path
 
     def _update_url_path(self, language):
-        base_path = self.parent.get_path(language) if self.parent else ''
+        parent_page = self.get_parent_page()
+        base_path = parent_page.get_path(language) if parent_page else ''
         new_path = self._get_path_sql_value(base_path)
 
         (PageUrl
@@ -303,7 +297,7 @@ class Page(MP_Node):
          .update(path=new_path))  # TODO: Update or create?
 
     def _update_url_path_recursive(self, language):
-        if self.is_leaf() or language not in self.get_languages():
+        if self.node.is_leaf() or language not in self.get_languages():
             return
 
         pages = self.get_child_pages()
@@ -320,7 +314,8 @@ class Page(MP_Node):
             child._update_url_path_recursive(language)
 
     def _set_title_root_path(self):
-        page_tree = self.__class__.get_tree(self)
+        node_tree = TreeNode.get_tree(self.node)
+        page_tree = self.__class__.objects.filter(node__in=node_tree)
         page_urls = PageUrl.objects.filter(page__in=page_tree, managed=True, path__isnull=False)
 
         for language, slug in self.urls.values_list('language', 'slug'):
@@ -333,7 +328,8 @@ class Page(MP_Node):
         return page_tree
 
     def _remove_title_root_path(self):
-        page_tree = self.__class__.get_tree(self)
+        node_tree = TreeNode.get_tree(self.node)
+        page_tree = self.__class__.objects.filter(node__in=node_tree)
         page_urls = PageUrl.objects.filter(page__in=page_tree, managed=True, path__isnull=False)
 
         for language, slug in self.urls.values_list('language', 'slug'):
@@ -358,53 +354,47 @@ class Page(MP_Node):
         :return: Boolean
         """
         # Only root nodes are eligible for homepage
-        return not self.is_home and bool(self.is_root())
+        return not self.is_home and bool(self.node.is_root())
 
     def get_absolute_url(self, language=None, fallback=True):
         if not language:
             language = get_current_language()
 
         with force_language(language):
-            try:
-                if self.is_home:
-                    return reverse('pages-root')
-                path = self.get_path(language, fallback) or self.get_slug(language, fallback)  # TODO: Disallow get_slug
-                return reverse('pages-details-by-slug', kwargs={"slug": path}) if path else None
-            except NoReverseMatch:
-                return None
+            if self.is_home:
+                return reverse('pages-root')
+            path = self.get_path(language, fallback) or self.get_slug(language, fallback)  # TODO: Disallow get_slug
+            return reverse('pages-details-by-slug', kwargs={"slug": path}) if path else None
 
     def set_tree_node(self, site, target=None, position='first-child'):
-        warnings.warn(
-            "Method `set_tree_node` is deprecated. Use `add_to_tree` instead.",
-            RemovedInDjangoCMS43Warning,
-            stacklevel=2
-        )
-        self.site = site
-        self.parent = target
-        return self.add_to_tree(position=position)
-
-    def add_to_tree(self, position='first-child'):
         assert position in ('last-child', 'first-child', 'left', 'right')
 
-        if self.parent is None:
-            Page.add_root(instance=self)
-        elif position == 'first-child' and self.parent.is_branch:
-            self.parent.get_first_child().add_sibling(pos='left', instance=self)
-        elif position in ('last-child', 'first-child'):
-            self.parent.add_child(instance=self)
-        else:
-            self.parent.add_sibling(pos=position, instance=self)
+        new_node = TreeNode(site=site)
 
-    def move_page(self, target_page, position='first-child'):
+        if target is None:
+            self.node = TreeNode.add_root(instance=new_node)
+        elif position == 'first-child' and target.is_branch:
+            self.node = target.get_first_child().add_sibling(pos='left', instance=new_node)
+        elif position in ('last-child', 'first-child'):
+            self.node = target.add_child(instance=new_node)
+        else:
+            self.node = target.add_sibling(pos=position, instance=new_node)
+
+    def move_page(self, target_node, position='first-child'):
         """
         Called from admin interface when page is moved. Should be used on
         all the places which are changing page position. Used like an interface
         to django-treebeard, but after move is done page_moved signal is fired.
+
+        Note for issue #1166: url conflicts are handled by updated
+        check_title_slugs, overwrite_url on the moved page don't need any check
+        as it remains the same regardless of the page position in the tree
         """
-        assert isinstance(target_page, Page), f"{target_page} is not an instance of Page."
+        assert isinstance(target_node, TreeNode)
+
         inherited_template = self.template == constants.TEMPLATE_INHERITANCE_MAGIC
 
-        if inherited_template and target_page.is_root() and position in ('left', 'right'):
+        if inherited_template and target_node.is_root() and position in ('left', 'right'):
             # The page is being moved to a root position.
             # Explicitly set the inherited template on the titles
             # to keep all plugins / placeholders.
@@ -415,23 +405,27 @@ class Page(MP_Node):
         self._clear_internal_cache()
 
         # Runs the SQL updates on the treebeard fields
-        self.move(target_page, position)
+        self.node.move(target_node, position)
 
         if position in ('first-child', 'last-child'):
-            self.parent = target_page
+            parent_id = target_node.pk
         else:
             # moving relative to sibling
             # or to the root of the tree
-            self.parent = target_page.parent
+            parent_id = target_node.parent_id
         # Runs the SQL updates on the parent field
-        self.update(parent=self.parent)
-        self.refresh_from_db(fields=('path', 'depth'))
+        self.node.update(parent_id=parent_id)
+
+        # Clear the cached node once again to trigger a db query
+        # on access.
+        self._clear_node_cache()
 
         # Update the urls for the page being moved
         # and is descendants.
         languages = (
             self
             .urls
+            .filter(language__in=self.get_languages())
             .values_list('language', flat=True)
         )
 
@@ -451,29 +445,36 @@ class Page(MP_Node):
         models.query.QuerySet.delete(plugins)
         return placeholders
 
-    def copy(self, site, parent_page=None, parent_node=None, language=None,
+    def copy(self, site, parent_node=None, language=None,
              translations=True, permissions=False, extensions=True, user=None):
         from cms.models import PageContent
         from cms.utils.page import get_available_slug
 
-        assert parent_page is None or isinstance(parent_page, Page), f"{parent_page} is not an instance of Page."
-        assert isinstance(user, get_user_model()), f"{user} is not an instance of User."
+        if not user:
+            raise ValueError("Since django CMS 4 the page.copy method requires a user argument")
 
-        if parent_node is not None:
-            warnings.warn(
-                "Argument `parent_node` is deprecated. Use `parent_page` instead.",
-                RemovedInDjangoCMS43Warning,
-                stacklevel=2,
-            )
-            parent_page = parent_page or parent_node
-
-        if parent_page:
-            new_page = parent_page.add_child(site=site)
+        if parent_node:
+            new_node = parent_node.add_child(site=site)
+            parent_page = parent_node.item
         else:
-            new_page = Page.add_root(site=site)
+            new_node = TreeNode.add_root(site=site)
+            parent_page = None
 
+        new_page = model_to_dict(self)
+        new_page.pop("id", None)  # Remove PK
+        new_page["node"] = new_node
+        # new_page["publisher_public_id"] = None
+        new_page["is_home"] = False
+        new_page["reverse_id"] = None
+        new_page["languages"] = ""
+        new_page = self.__class__.objects.create(**new_page)
         new_page._state = ModelState()
         new_page._clear_internal_cache()
+
+        # Have the node remember its page.
+        # This is done to save some queries
+        # when the node's descendants are copied.
+        new_page.node.__dict__['item'] = new_page
 
         if language and translations:
             page_urls = self.urls.filter(language=language)
@@ -493,13 +494,13 @@ class Page(MP_Node):
 
             if parent_page:
                 base = parent_page.get_path(page_url.language)
-                path = f'{base}/{page_url.slug}' if base else page_url.slug
+                path = '%s/%s' % (base, page_url.slug) if base else page_url.slug
             else:
                 base = ''
                 path = page_url.slug
 
             new_url["slug"] = get_available_slug(site, path, page_url.language)
-            new_url["path"] = '{}/{}'.format(base, new_url["slug"]) if base else new_url["slug"]
+            new_url["path"] = '%s/%s' % (base, new_url["slug"]) if base else new_url["slug"]
             PageUrl.objects.with_user(user).create(**new_url)
 
         # copy titles of this page
@@ -517,6 +518,7 @@ class Page(MP_Node):
                 )
                 placeholder.copy_plugins(new_placeholder, language=new_title.language)
             new_page.page_content_cache[new_title.language] = new_title
+        new_page.update_languages([trans.language for trans in translations])
 
         if extensions:
             from cms.extensions import extension_pool
@@ -536,70 +538,68 @@ class Page(MP_Node):
                 new_page.pagepermission_set.bulk_create(permissions_new)
         return new_page
 
-    def copy_with_descendants(self, target_page=None, target_node=None, position=None,
+    def copy_with_descendants(self, target_node=None, position=None,
                               copy_permissions=True, target_site=None, user=None):
         """
         Copy a page [ and all its descendants to a new location ]
         """
-        from cms.models import PageContent
-
-        if target_node is not None:
-            warnings.warn(
-                "Argument `parent_node` is deprecated. Use `parent_page` instead.",
-                RemovedInDjangoCMS43Warning,
-                stacklevel=2,
-            )
-            target_page = target_page or target_node
-
         if position in ('first-child', 'last-child'):
-            parent_page = target_page
-        elif target_page:
-            parent_page = target_page.parent
+            parent_node = target_node
+        elif target_node:
+            parent_node = target_node.parent
         else:
-            parent_page = None
+            parent_node = None
 
         if target_site is None:
-            target_site = parent_page.site if parent_page else self.site
+            target_site = parent_node.site if parent_node else self.node.site
 
         # Evaluate the descendants queryset BEFORE copying the page.
         # Otherwise, if the page is copied and pasted on itself, it will duplicate.
+        from cms.models import PageContent
         descendants = list(
             self.get_descendant_pages()
+            .select_related('node')
             .prefetch_related(
                 'urls',
                 Prefetch('pagecontent_set', queryset=PageContent.admin_manager.all()),
             )
         )
-        new_root_page = self.copy(target_site, parent_page=parent_page, user=user)
+        new_root_page = self.copy(target_site, parent_node=parent_node, user=user)
+        new_root_node = new_root_page.node
 
-        if target_page and position in ('first-child'):
-            # target page is a parent and user has requested to
+        if target_node and position in ('first-child'):
+            # target node is a parent and user has requested to
             # insert the new page as its first child
-            new_root_page.move(target_page, position)
-            new_root_page.refresh_from_db(fields=('path', 'depth'))
+            new_root_node.move(target_node, position)
+            new_root_node.refresh_from_db(fields=('path', 'depth'))
 
-        if target_page and position in ('left', 'last-child'):
-            # target page is a sibling
-            new_root_page.move(target_page, position)
-            new_root_page.refresh_from_db(fields=('path', 'depth'))
+        if target_node and position in ('left', 'last-child'):
+            # target node is a sibling
+            new_root_node.move(target_node, position)
+            new_root_node.refresh_from_db(fields=('path', 'depth'))
 
-        pages_by_id = {self.id: new_root_page}
+        nodes_by_id = {self.node.pk: new_root_node}
+
         for page in descendants:
-            parent = pages_by_id[page.parent_id]
-            pages_by_id[page.id] = page.copy(
+            parent = nodes_by_id[page.node.parent_id]
+            new_page = page.copy(
                 target_site,
-                parent_page=parent,
+                parent_node=parent,
                 translations=True,
                 permissions=copy_permissions,
                 user=user
             )
+            nodes_by_id[page.node_id] = new_page.node
         return new_root_page
 
     def delete(self, *args, **kwargs):
-        Page.get_tree(self).delete_fast()
+        TreeNode.get_tree(self.node).delete_fast()
 
-        if self.parent:
-            Page.objects.filter(id=self.parent_id).update(numchild=models.F('numchild') - 1)
+        if self.node.parent_id:
+            (TreeNode
+             .objects
+             .filter(pk=self.node.parent_id)
+             .update(numchild=models.F('numchild') - 1))
         self.clear_cache(menu=True)
 
     def delete_translations(self, language=None):
@@ -657,73 +657,81 @@ class Page(MP_Node):
 
             placeholders = self.get_placeholders(language)
 
-            for placeholder_instance in placeholders:
-                placeholder_instance.clear_cache(language, site_id=self.site_id)
+            for placeholder in placeholders:
+                placeholder.clear_cache(language, site_id=self.node.site_id)
 
         if menu:
             # Clears all menu caches for this page's site
-            menu_pool.clear(site_id=self.site_id)
+            menu_pool.clear(site_id=self.node.site_id)
 
     def get_child_pages(self):
-        return self.get_children().order_by('path')
+        nodes = self.node.get_children()
+        pages = (
+            self
+            .__class__
+            .objects
+            .filter(node__in=nodes)
+            .order_by('node__path')
+        )
+        return pages
 
     def get_ancestor_pages(self):
-        return self.get_ancestors().order_by('path')
+        nodes = self.node.get_ancestors()
+        pages = (
+            self
+            .__class__
+            .objects
+            .filter(node__in=nodes)
+            .order_by('node__path')
+        )
+        return pages
 
     def get_descendant_pages(self):
-        return self.get_descendants().order_by('path')
+        nodes = self.node.get_descendants()
+        pages = (
+            self
+            .__class__
+            .objects
+            .filter(node__in=nodes)
+            .order_by('node__path')
+        )
+        return pages
 
     def get_root(self):
-        return self.__class__.objects.get(path=self.path[0:self.steplen])
+        node = self.node
+        return self.__class__.objects.get(node__path=node.path[0:node.steplen])
 
     def get_parent_page(self):
-        warnings.warn(
-            "Method `get_parent_page()` is deprecated. Instead use the `parent` attribute.",
-            RemovedInDjangoCMS43Warning,
-            stacklevel=2
-        )
-        return self.parent
+        if not self.node.parent_id:
+            return None
 
-    @property
-    def languages(self):
-        warnings.warn(
-            "Attribute `languages` is deprecated. Use `get_languages` instead.",
-            RemovedInDjangoCMS43Warning,
-            stacklevel=2
-        )
-        return ",".join(self.get_languages())
+        pages = Page.objects.filter(node=self.node.parent_id)
+        return pages.select_related('node').first()
 
-    def get_languages(self, admin_manager=True):
-        """Returns available languages for the page. This is potentially costly."""
-        if admin_manager:
-            if not self.admin_content_cache:
-                self.set_admin_content_cache()
-            return list(self.admin_content_cache.keys())
-        if not self.page_content_cache:
-            self._get_page_content_cache(get_language(), fallback=False, force_reload=False)
-        return list(self.page_content_cache.keys())
+    def get_languages(self):
+        if self.languages:
+            return sorted(self.languages.split(','))
+        else:
+            return []
 
     def remove_language(self, language):
-        warnings.warn(
-            "Method `remove_language` is deprecated and has no effect any more.",
-            RemovedInDjangoCMS43Warning,
-            stacklevel=2
-        )
+        page_languages = self.get_languages()
+
+        if language in page_languages:
+            page_languages.remove(language)
+            self.update_languages(page_languages)
 
     def update_languages(self, languages):
-        warnings.warn(
-            "Method `update_languages` is deprecated and has no effect any more.",
-            RemovedInDjangoCMS43Warning,
-            stacklevel=2
-        )
+        languages = ",".join(set(languages))
+        # Update current instance
+        self.languages = languages
+        # Commit. It's important to not call save()
+        # we'd like to commit only the languages field and without
+        # any kind of signals.
+        self.update(languages=languages)
 
     def get_published_languages(self):
-        warnings.warn(
-            "Method `get_published_languages` is deprecated. Use `get_languages(admin_manager=False)` instead.",
-            RemovedInDjangoCMS43Warning,
-            stacklevel=2,
-        )
-        return self.get_languages(admin_manager=False)
+        return self.get_languages()
 
     def set_translations_cache(self):
         warnings.warn(
@@ -736,8 +744,7 @@ class Page(MP_Node):
             self.page_content_cache.setdefault(translation.language, translation)
 
     def set_admin_content_cache(self):
-        self.admin_content_cache = AdminCacheDict()
-        for translation in self.pagecontent_set(manager="admin_manager").latest_content().all():
+        for translation in self.pagecontent_set(manager="admin_manager").current_content().all():
             self.admin_content_cache.setdefault(translation.language, translation)
 
     def get_admin_content(self, language, fallback=False):
@@ -763,10 +770,10 @@ class Page(MP_Node):
         if self.is_home:
             return ''
 
-        if self.parent:
-            base = self.parent.get_path(language, fallback=True)
+        if self.parent_page:
+            base = self.parent_page.get_path(language, fallback=True)
             # base can be empty when the parent is a home-page
-            path = f'{base}/{slug}' if base else slug
+            path = '%s/%s' % (base, slug) if base else slug
         else:
             path = slug
         return path
@@ -785,7 +792,7 @@ class Page(MP_Node):
         return page_urls.update(**data)
 
     def get_fallbacks(self, language):
-        return i18n.get_fallback_languages(language, site_id=self.site_id)
+        return i18n.get_fallback_languages(language, site_id=self.node.site_id)
 
     # ## PageContent object access
 
@@ -808,35 +815,58 @@ class Page(MP_Node):
         except AttributeError:
             return None
 
-    def get_url_obj(self, language, fallback=True):
+    def get_path(self, language, fallback=True):
         """Get the path of the page depending on the given language"""
         languages = [language]
+
         if fallback:
             languages.extend(self.get_fallbacks(language))
 
+        page_languages = self.get_languages()
+
+        for _language in languages:
+            if _language in page_languages:
+                language = _language
+                break
+
         if language not in self.urls_cache:
-            # `get_page_from_request` will fill the cache only for the current language
-            # Here, we fully fill it and try again
-            self.urls_cache = {
-                url.language: url for url in self.urls.all() if url.language in languages
-            }
+            self.urls_cache.update({
+                url.language: url for url in self.urls.filter(language__in=languages)  # TODO: overwrites multiple urls
+            })
 
-        return next(
-            (self.urls_cache[lang] for lang in languages if lang in self.urls_cache),
-            None
-        )
+            for _language in languages:
+                self.urls_cache.setdefault(_language, None)
 
-    def get_path(self, language, fallback=True):
-        url = self.get_url_obj(language, fallback)
-        if url:
-            return url.path
-        return None
+        try:
+            return self.urls_cache[language].path
+        except (AttributeError, KeyError):
+            return None
 
     def get_slug(self, language, fallback=True):
-        url = self.get_url_obj(language, fallback)
-        if url:
-            return url.slug
-        return None
+        languages = [language]
+
+        if fallback:
+            languages.extend(self.get_fallbacks(language))
+
+        page_languages = self.get_languages()
+
+        for _language in languages:
+            if _language in page_languages:
+                language = _language
+                break
+
+        if language not in self.urls_cache:
+            self.urls_cache.update({
+                url.language: url for url in self.urls.filter(language__in=languages)
+            })
+
+            for _language in languages:
+                self.urls_cache.setdefault(_language, None)
+
+        try:
+            return self.urls_cache[language].slug
+        except (AttributeError, KeyError):
+            return None
 
     def get_title(self, language=None, fallback=True, force_reload=False):
         """
@@ -900,10 +930,6 @@ class Page(MP_Node):
         return self.get_page_content_obj_attribute("redirect", language, fallback, force_reload)
 
     def _get_page_content_cache(self, language, fallback, force_reload):
-        """
-        Sets the internal page object cache for page content objects available to the general user.
-        It optionally respe
-        """
         def get_fallback_language(page, language):
             fallback_langs = i18n.get_fallback_languages(language)
             for lang in fallback_langs:
@@ -949,7 +975,7 @@ class Page(MP_Node):
         content = self.get_content_obj(language, fallback, force_reload)
         if content:
             return content.get_template()
-        return get_cms_setting('TEMPLATES')[0][0] if get_cms_setting('TEMPLATES') else ""
+        return get_cms_setting('TEMPLATES')[0][0]
 
     def get_template_name(self):
         """
@@ -1045,18 +1071,16 @@ class Page(MP_Node):
     def rescan_placeholders(self, language):
         return self.get_content_obj(language=language).rescan_placeholders()
 
-    def get_declared_placeholders(self, language=None, fallback=True, force_reload=False):
-        from cms.utils.placeholder import get_declared_placeholders_for_obj
+    def get_declared_placeholders(self):
+        # inline import to prevent circular imports
+        from cms.utils.placeholder import get_placeholders
 
-        content = self.get_content_obj(language, fallback, force_reload)
-        if content:
-            return get_declared_placeholders_for_obj(content)
-        return []
+        return get_placeholders(self.get_template())
 
     def get_xframe_options(self, language=None, fallback=True, force_reload=False):
-        content = self.get_content_obj(language, fallback, force_reload)
-        if content:
-            return content.get_xframe_options()
+        title = self.get_content_obj(language, fallback, force_reload)
+        if title:
+            return title.get_xframe_options()
 
     def get_soft_root(self, language=None, fallback=True, force_reload=False):
         return self.get_page_content_obj_attribute("soft_root", language, fallback, force_reload)
@@ -1084,26 +1108,22 @@ class PageUrl(models.Model):
     class Meta:
         app_label = 'cms'
         default_permissions = []
-        unique_together = ('language', 'page')
 
     def __str__(self):
-        return f"{self.path or self.slug} ({self.language})"
+        return "%s (%s)" % (self.path or self.slug, self.language)
 
     def get_absolute_url(self, language=None, fallback=True):
         if not language:
             language = get_current_language()
 
         with force_language(language):
-            try:
-                if self.path == '':
-                    return reverse('pages-root')
-                return reverse('pages-details-by-slug', kwargs={"slug": self.path})
-            except NoReverseMatch:
-                return None
+            if self.path == '':
+                return reverse('pages-root')
+            return reverse('pages-details-by-slug', kwargs={"slug": self.path})
 
     def get_path_for_base(self, base_path=''):
         old_base, sep, slug = self.path.rpartition('/')
-        return f'{base_path}/{slug}' if base_path else slug
+        return '%s/%s' % (base_path, slug) if base_path else slug
 
 
 class PageType(Page):
@@ -1115,7 +1135,7 @@ class PageType(Page):
     @classmethod
     def get_root_page(cls, site):
         pages = Page.objects.on_site(site).filter(
-            depth=1,
+            node__depth=1,
             is_page_type=True,
         )
         return pages.first()

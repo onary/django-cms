@@ -23,7 +23,12 @@ INHERIT_WITH_OR_TEMPLATE_NAME = 'tests/rendering/inherit_with_or.html'
 
 def sample_plugin_processor(instance, placeholder, rendered_content, original_context):
     original_context_var = original_context['original_context_var']
-    return f'{rendered_content}|test_plugin_processor_ok|{instance.body}|{placeholder.slot}|{original_context_var}'
+    return '%s|test_plugin_processor_ok|%s|%s|%s' % (
+        rendered_content,
+        instance.body,
+        placeholder.slot,
+        original_context_var
+    )
 
 
 def sample_plugin_context_processor(instance, placeholder, original_context):
@@ -758,7 +763,7 @@ class RenderingTestCase(CMSTestCase):
         output = renderer.render_placeholder(placeholder, context, 'en', editable=True)
 
         for cls in classes:
-            self.assertTrue(cls in output, f'{cls!r} is not in {output!r}')
+            self.assertTrue(cls in output, '%r is not in %r' % (cls, output))
 
     def test_render_plugin_toolbar_markup(self):
         """

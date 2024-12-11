@@ -8,7 +8,7 @@ from django.db.models import Q
 from django.utils.encoding import force_str
 from django.utils.translation import gettext_lazy as _
 
-from cms.models import Page
+from cms.models import Page, TreeNode
 from cms.models.managers import (
     GlobalPagePermissionManager,
     PagePermissionManager,
@@ -218,7 +218,7 @@ class GlobalPagePermission(AbstractPagePermission):
 
 
 class PermissionTuple(tuple):
-    def contains(self, path: str, steplen: int = Page.steplen) -> bool:
+    def contains(self, path: str, steplen: int = TreeNode.steplen) -> bool:
         grant_on, perm_path = self
         if grant_on == ACCESS_PAGE:
             return path == perm_path
@@ -232,7 +232,7 @@ class PermissionTuple(tuple):
             return path.startswith(perm_path) and len(path) <= len(perm_path) + steplen
         return False
 
-    def allow_list(self, filter: str = "", steplen: int = Page.steplen) -> Q:
+    def allow_list(self, filter: str = "", steplen: int = TreeNode.steplen) -> Q:
         if filter != "":
             filter = f"{filter}__"
         grant_on, path = self
@@ -264,7 +264,7 @@ class PagePermission(AbstractPagePermission):
 
     def __str__(self):
         page = self.page_id and force_str(self.page) or "None"
-        return f"{page} :: {self.audience} has: {force_str(self.get_grant_on_display())}"
+        return "%s :: %s has: %s" % (page, self.audience, force_str(self.get_grant_on_display()))
 
     def clean(self):
         super().clean()
@@ -279,7 +279,8 @@ class PagePermission(AbstractPagePermission):
             raise ValidationError(message)
 
     def get_page_permission_tuple(self):
-        return PermissionTuple((self.grant_on, self.page.path))
+        node = self.page.node
+        return PermissionTuple((self.grant_on, node.path))
 
     def get_page_ids(self):
         import warnings
@@ -297,14 +298,18 @@ class PagePermission(AbstractPagePermission):
         if self.grant_on & MASK_CHILDREN:
             children = self.page.get_child_pages().values_list('pk', flat=True)
 
-            yield from children
+            for child in children:
+                yield child
         elif self.grant_on & MASK_DESCENDANTS:
-            if self.page._has_cached_hierarchy():
-                descendants = (page.pk for page in self.page.get_cached_descendants())
+            node = self.page.node
+
+            if node._has_cached_hierarchy():
+                descendants = (node.item.pk for node in node.get_cached_descendants())
             else:
                 descendants = self.page.get_descendant_pages().values_list('pk', flat=True).iterator()
 
-            yield from descendants
+            for descendant in descendants:
+                yield descendant
 
 
 class PageUserManager(UserManager):

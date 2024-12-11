@@ -386,13 +386,14 @@ class ContentRenderer(BaseRenderer):
                 use_cache=True,
                 nodelist=None,
             )
+        parent_page = current_page.parent_page
         should_inherit = (
             inherit
-            and not content and current_page.parent
+            and not content and parent_page
             # The placeholder cache is primed when the first placeholder
             # is loaded. If the current page's parent is not in there,
             # it means its cache was never primed as it wasn't necessary.
-            and current_page.parent.pk in placeholder_cache
+            and parent_page.pk in placeholder_cache
             # don't display inherited plugins in edit mode, so that the user doesn't
             # mistakenly edit/delete them. This is a fix for issue #1303. See the discussion
             # there for possible enhancements
@@ -406,7 +407,7 @@ class ContentRenderer(BaseRenderer):
                 slot,
                 context,
                 inherit=True,
-                page=current_page.parent,
+                page=parent_page,
                 nodelist=None,
                 editable=False,
             )
@@ -618,6 +619,7 @@ class ContentRenderer(BaseRenderer):
                 lang=self.request_language,
             )
 
+        parent_page = page.parent_page
         # Inherit only placeholders that have no plugins
         # or are not cached.
         placeholders_to_inherit = [
@@ -625,9 +627,9 @@ class ContentRenderer(BaseRenderer):
             if not getattr(pl, '_plugins_cache', None) and pl.slot in slots_w_inheritance
         ]
 
-        if page.parent and placeholders_to_inherit:
+        if parent_page and placeholders_to_inherit:
             self._preload_placeholders_for_page(
-                page=page.parent,
+                page=parent_page,
                 slots=placeholders_to_inherit,
                 inherit=True,
             )

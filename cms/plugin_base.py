@@ -3,7 +3,11 @@ import re
 
 from django import forms
 from django.contrib import admin, messages
-from django.core.exceptions import ImproperlyConfigured, ObjectDoesNotExist, ValidationError
+from django.core.exceptions import (
+    ImproperlyConfigured,
+    ObjectDoesNotExist,
+    ValidationError,
+)
 from django.shortcuts import render
 from django.utils.encoding import force_str, smart_str
 from django.utils.html import escapejs
@@ -12,8 +16,7 @@ from django.utils.translation import gettext, gettext_lazy as _
 from cms import operations
 from cms.exceptions import SubClassNeededError
 from cms.models import CMSPlugin
-from cms.toolbar.utils import get_plugin_toolbar_info, get_plugin_tree
-from cms.utils.compat import DJANGO_5_1
+from cms.toolbar.utils import get_plugin_toolbar_info, get_plugin_tree_as_json
 from cms.utils.conf import get_cms_setting
 
 
@@ -254,15 +257,6 @@ class CMSPluginBase(admin.ModelAdmin, metaclass=CMSPluginBaseMetaclass):
             raise ValidationError("plugin has no render_template: %s" % self.__class__)
         return template
 
-    if DJANGO_5_1:
-        # Avoid a bug in Django's template engine that is incompatible with Python 3.9+
-        # type hinting. By default, the parent class has no __class_getitem__ method.
-        # There exist third-party packages, however, that inject type hinting into Django.
-        # This ensures, that any type hinting is ignore for CMSPlugin (below Django 5.2)
-        # See https://github.com/django-cms/django-cms/issues/7948
-        def __class_getitem__(cls, item):
-            raise TypeError
-
     @classmethod
     def get_render_queryset(cls):
         return cls.model._default_manager.all()
@@ -437,11 +431,12 @@ class CMSPluginBase(admin.ModelAdmin, metaclass=CMSPluginBaseMetaclass):
             parents=parent_classes,
         )
         data['plugin_desc'] = escapejs(force_str(obj.get_short_description()))
-        data['structure'] = get_plugin_tree(request, plugins)
+
         context = {
             'plugin': obj,
             'is_popup': True,
-            'data_bridge': data,
+            'plugin_data': json.dumps(data),
+            'plugin_structure': get_plugin_tree_as_json(request, plugins),
         }
 
         if extra_context:
@@ -562,7 +557,7 @@ class CMSPluginBase(admin.ModelAdmin, metaclass=CMSPluginBaseMetaclass):
 
 
         """
-        return f"{force_str(self.name)} - {force_str(instance)}"
+        return "%s - %s" % (force_str(self.name), force_str(instance))
 
     def get_fieldsets(self, request, obj=None):
         """

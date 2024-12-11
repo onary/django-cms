@@ -109,7 +109,7 @@ class PlaceholderTestCase(TransactionCMSTestCase):
         self.assertEqual(sorted(placeholders), sorted(['new_one', 'new_two', 'new_three']))
 
     def test_placeholder_scanning_duplicate(self):
-        placeholders = self.failUnlessWarns(
+        placeholders = self.assertWarns(
             DuplicatePlaceholderWarning,
             'Duplicate {% placeholder "one" %} in template placeholder_tests/test_seven.html.',
             _get_placeholder_slots, 'placeholder_tests/test_seven.html'
@@ -150,6 +150,7 @@ class PlaceholderTestCase(TransactionCMSTestCase):
         renderer = toolbar.get_content_renderer()
         with self.assertRaises(PlaceholderNotFound):
             renderer.render_obj_placeholder("someslot", context, False)
+
 
     def test_fieldsets_requests(self):
         response = self.client.get(admin_reverse('placeholderapp_example1_add'))
@@ -865,7 +866,7 @@ class PlaceholderTestCase(TransactionCMSTestCase):
         Checks the retrieval of filled languages for a placeholder in a django
         model
         """
-        avail_langs = {'en', 'de', 'fr'}
+        avail_langs = set(['en', 'de', 'fr'])
         # Setup instance
         ex = Example1(
             char_1='one',
@@ -890,7 +891,7 @@ class PlaceholderTestCase(TransactionCMSTestCase):
         Checks the retrieval of filled languages for a placeholder in a django
         model
         """
-        avail_langs = {'en', 'de', 'fr'}
+        avail_langs = set(['en', 'de', 'fr'])
         # Setup instances
         page = create_page('test page', 'col_two.html', 'en')
         for lang in avail_langs:
@@ -1123,9 +1124,9 @@ class PlaceholderActionTests(FakemlngFixtures, CMSTestCase):
         )
         EN = ('en', 'English')
         FR = ('fr', 'French')
-        self.assertEqual(set(fr_copy_languages), {EN})
-        self.assertEqual(set(de_copy_languages), {EN, FR})
-        self.assertEqual(set(en_copy_languages), {FR})
+        self.assertEqual(set(fr_copy_languages), set([EN]))
+        self.assertEqual(set(de_copy_languages), set([EN, FR]))
+        self.assertEqual(set(en_copy_languages), set([FR]))
 
     def test_mlng_placeholder_actions_copy(self):
         actions = MLNGPlaceholderActions()
@@ -1317,7 +1318,8 @@ class PlaceholderPluginTestsBase(CMSTestCase):
         for child in parent.cmsplugin_set.all():
             yield child.pk
 
-            yield from self._unpack_descendants(child)
+            for desc in self._unpack_descendants(child):
+                yield desc
 
     def setUp(self):
         self.placeholder = self._create_placeholder()
@@ -1373,6 +1375,10 @@ class PlaceholderFlatPluginTests(PlaceholderPluginTestsBase):
             .get_plugins()
             .values_list('pk', flat=True)
         )
+
+        new_tree = self.get_plugins().values_list('pk', 'position')
+        expected = [(pk, pos) for pos, pk in enumerate(plugin_tree_all, 1)]
+        self.assertSequenceEqual(new_tree, expected)
 
         for plugin in self.get_plugins().filter(parent__isnull=True):
             for plugin_id in [plugin.pk] + tree[plugin.pk]:

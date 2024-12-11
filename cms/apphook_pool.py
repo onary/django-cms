@@ -73,8 +73,9 @@ class ApphookPool:
 
         for app_name in self.apps:
             app = self.apps[app_name]
+
             if app.get_urls():
-                hooks.append((app_name, app.name or app_name))
+                hooks.append((app_name, app.name))
 
         # Unfortunately, we lose the ordering since we now have a list of
         # tuples. Let's reorder by app_name:

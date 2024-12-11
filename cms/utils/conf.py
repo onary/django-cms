@@ -14,8 +14,7 @@ __all__ = [
 ]
 
 
-class VERIFIED:
-    pass  # need a unique identifier for CMS_LANGUAGES
+class VERIFIED: pass  # need a unique identifier for CMS_LANGUAGES
 
 
 def _load_from_file(module_path):
@@ -48,7 +47,6 @@ DEFAULTS = {
     'DEFAULT_X_FRAME_OPTIONS': constants.X_FRAME_OPTIONS_INHERIT,
     'TOOLBAR_SIMPLE_STRUCTURE_MODE': True,
     'PLACEHOLDER_CONF': {},
-    'PLACEHOLDERS': (('', ('content',), _("Single placeholder")),),
     'PERMISSION': False,
     # Whether to use raw ID lookups for users when PERMISSION is True
     'RAW_ID_USERS': False,
@@ -138,7 +136,7 @@ def get_templates():
         if isinstance(tpldir, dict):
             tpldir = tpldir[settings.SITE_ID]
         # We must extract the relative path of CMS_TEMPLATES_DIR to the nearest
-        # valid templates' directory. Here we mimic what the filesystem and
+        # valid templates directory. Here we mimic what the filesystem and
         # app_directories template loaders do
         prefix = ''
         # Relative to TEMPLATE['DIRS'] for filesystem loader
@@ -170,17 +168,9 @@ def get_templates():
             templates = list((os.path.join(prefix, tpl), tpl) for tpl in os.listdir(tpldir))
     else:
         templates = list(getattr(settings, 'CMS_TEMPLATES', []))
-    if get_cms_setting('TEMPLATE_INHERITANCE') and templates:
+    if get_cms_setting('TEMPLATE_INHERITANCE'):
         templates.append((constants.TEMPLATE_INHERITANCE_MAGIC, _('Inherit the template of the nearest ancestor')))
     return templates
-
-
-def get_placeholders():
-    if getattr(settings, 'CMS_PLACEHOLDERS', False):
-        return settings.CMS_PLACEHOLDERS
-    if getattr(settings, 'CMS_TEMPLATES', False) or getattr(settings, 'CMS_TEMPLATES_DIR', False):
-        return ()
-    return DEFAULTS['PLACEHOLDERS']
 
 
 def _ensure_languages_settings(languages):
@@ -220,7 +210,7 @@ def _ensure_languages_settings(languages):
             for key in language_object:
                 if key not in valid_language_keys:
                     raise ImproperlyConfigured(
-                        f"CMS_LANGUAGES has invalid key {key!r} in language {language_code!r} in site {site!r}"
+                        "CMS_LANGUAGES has invalid key %r in language %r in site %r" % (key, language_code, site)
                     )
 
             if 'fallbacks' not in language_object:
@@ -282,7 +272,6 @@ COMPLEX = {
     'MEDIA_URL': get_media_url,
     # complex because not prefixed by CMS_
     'TEMPLATES': get_templates,
-    'PLACEHOLDERS': get_placeholders,
     'LANGUAGES': get_languages,
     'UNIHANDECODE_HOST': get_unihandecode_host,
     'CMS_TOOLBAR_URL__PERSIST': get_toolbar_url__persist,

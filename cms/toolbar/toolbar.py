@@ -56,7 +56,7 @@ class BaseToolbar(ToolbarAPIMixin):
     @cached_property
     def site_language(self):
         cms_page = self.request.current_page
-        site_id = cms_page.site_id if cms_page else None
+        site_id = cms_page.node.site_id if cms_page else None
         return get_site_language_from_request(self.request, site_id)
 
     @cached_property
@@ -104,7 +104,8 @@ class BaseToolbar(ToolbarAPIMixin):
 
         if self.structure_mode_active:
             return True
-        if self.is_staff and self._resolver_match:
+
+        if self._resolver_match:
             return self._resolver_match.url_name == 'cms_placeholder_render_object_edit'
         return False
 
@@ -118,6 +119,9 @@ class BaseToolbar(ToolbarAPIMixin):
     @cached_property
     def content_mode_active(self):
         """``True`` if content mode is active."""
+        if self.structure_mode_active:
+            # Structure mode always takes precedence
+            return False
         return self.is_staff and not self.edit_mode_active
 
     @cached_property
@@ -517,7 +521,6 @@ class CMSToolbarBase(BaseToolbar):
 
         context = {
             'cms_toolbar': self,
-            'object_is_immutable': not self.object_is_editable(),
             'cms_renderer': renderer,
             'cms_edit_url': self.get_object_edit_url(),
             'cms_preview_url': self.get_object_preview_url(),
@@ -556,7 +559,7 @@ class CMSToolbarBase(BaseToolbar):
             # render the toolbar content
             toolbar = render_to_string('cms/toolbar/toolbar_with_structure.html', flatten_context(context))
         # return the toolbar content and the content below
-        return f'{toolbar}\n{rendered_contents}'
+        return '%s\n%s' % (toolbar, rendered_contents)
 
 
 # Add toolbar mixins from extensions to toolbar

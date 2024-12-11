@@ -135,12 +135,12 @@ def get_user_permission_level(user, site):
             .objects
             .get_with_change_permissions(user, site)
             .select_related('page')
-            .order_by('page__path')
+            .order_by('page__node__path')
         )[0]
     except IndexError:
         # user isn't assigned to any node
         raise NoPermissionsException
-    return permission.page.depth
+    return permission.page.node.depth
 
 
 def cached_func(func):
@@ -156,20 +156,6 @@ def cached_func(func):
     # Allows us to access the un-cached function
     cached_func.without_cache = func
     return cached_func
-
-
-def clear_func_cache(user, func):
-    func_cache_name = '_djangocms_cached_func_%s' % func.__name__
-    if hasattr(user, func_cache_name):
-        delattr(user, func_cache_name)
-
-
-def clear_permission_lru_caches(user):
-    """
-    Clear all python lru caches used by the permission system
-    """
-    clear_func_cache(user, get_global_actions_for_user)
-    clear_func_cache(user, get_page_actions_for_user)
 
 
 @cached_func
@@ -194,12 +180,12 @@ def get_page_actions_for_user(user, site):
         PagePermission
         .objects
         .with_user(user)
-        .select_related('page')
-        .filter(page__site=site)
+        .select_related('page__node')
+        .filter(page__node__site=site)
     )
 
     for perm in page_permissions.iterator():
-        permission_tuple = perm.grant_on, perm.page.path
+        permission_tuple = perm.grant_on, perm.page.node.path
         for action in perm.get_configured_actions():
             actions[action].append(permission_tuple)
     return actions
@@ -234,7 +220,7 @@ def has_page_permission(user, page, action, use_cache=True):
     if action in action_map:
         action = action_map[action]
 
-    return has_generic_permission(page, user, action, site=page.site, check_global=False, use_cache=use_cache)
+    return has_generic_permission(page, user, action, site=None, check_global=False, use_cache=use_cache)
 
 
 def get_subordinate_users(user, site):
@@ -287,12 +273,12 @@ def get_subordinate_users(user, site):
     from cms.models import PermissionTuple
     allow_list = Q()
     for perm_tuple in get_change_permissions_perm_tuples(user, site, check_global=False):
-        allow_list |= PermissionTuple(perm_tuple).allow_list("pagepermission__page")
+        allow_list |= PermissionTuple(perm_tuple).allow_list("pagepermission__page__node")
 
     # normal query
     qs = get_user_model().objects.distinct().filter(
         Q(is_staff=True) & (
-            allow_list & Q(pagepermission__page__depth__gte=user_level)
+            allow_list & Q(pagepermission__page__node__depth__gte=user_level)
         ) | (
             Q(pageuser__created_by=user) & Q(pagepermission__page=None)
         )
@@ -332,11 +318,11 @@ def get_subordinate_groups(user, site):
     from cms.models import PermissionTuple
     allow_list = Q()
     for perm_tuple in get_change_permissions_perm_tuples(user, site, check_global=False):
-        allow_list |= PermissionTuple(perm_tuple).allow_list("pagepermission__page")
+        allow_list |= PermissionTuple(perm_tuple).allow_list("pagepermission__page__node")
 
     return Group.objects.distinct().filter(
         (
-            allow_list & Q(pagepermission__page__depth__gte=user_level)
+            allow_list & Q(pagepermission__page__node__depth__gte=user_level)
         ) | (
             Q(pageusergroup__created_by=user) & Q(pagepermission__page__isnull=True)
         )
@@ -362,10 +348,13 @@ def get_view_restrictions(pages):
     if not pages:
         return restricted_pages
 
+    nodes = [page.node for page in pages]
     pages_by_id = {}
+
     for page in pages:
-        if page.is_root():
-            page._set_hierarchy(pages)
+        if page.node.is_root():
+            page.node._set_hierarchy(nodes)
+        page.node.__dict__['item'] = page
         pages_by_id[page.pk] = page
 
     page_permissions = PagePermission.objects.filter(

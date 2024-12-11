@@ -13,7 +13,7 @@ class Migration(migrations.Migration):
     operations = [
         migrations.AlterModelOptions(
             name='cmsplugin',
-            options={'ordering': ('position',), 'verbose_name': 'plugin', 'verbose_name_plural': 'plugins'},
+            options={'ordering': ('position',)},
         ),
         migrations.AlterField(
             model_name='cmsplugin',

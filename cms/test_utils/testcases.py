@@ -32,6 +32,7 @@ from cms.models.permissionmodels import (
 from cms.plugin_rendering import ContentRenderer, StructureRenderer
 from cms.test_utils.util.context_managers import UserLoginContext
 from cms.toolbar.utils import get_toolbar_from_request
+from cms.utils.compat import DJANGO_4_1
 from cms.utils.conf import get_cms_setting
 from cms.utils.permissions import set_current_user
 from cms.utils.urlutils import admin_reverse
@@ -153,6 +154,18 @@ class BaseCMSTestCase:
         pp.sites = Site.objects.all()
         return pp
 
+    def get_page_title_obj(self, page, language="en"):
+        import warnings
+
+        from cms.utils.compat.warnings import RemovedInDjangoCMS42Warning
+
+        warnings.warn(
+            "get_page_title_obj is deprecated, use get_pagecontent_obj instead",
+            RemovedInDjangoCMS42Warning,
+            stacklevel=2,
+        )
+        return PageContent.objects.get(page=page, language=language)
+
     def get_pagecontent_obj(self, page, language="en"):
         return PageContent.objects.get(page=page, language=language)
 
@@ -258,7 +271,7 @@ class BaseCMSTestCase:
         page_data = {
             'title': 'test page %d' % self.counter,
             'slug': 'test-page-%d' % self.counter,
-            'parent_page': parent_id,
+            'parent_node': parent_id,
         }
         # required only if user haves can_change_permission
         self.counter += 1
@@ -299,7 +312,9 @@ class BaseCMSTestCase:
         for page in qs.order_by('path'):
             ident = "  " * page.level
             print(
-                f"{ident}{page} ({page.pk}), path: {page.path}, depth: {page.depth}, numchild: {page.numchild}"
+                "%s%s (%s), path: %s, depth: %s, numchild: %s" % (
+                    ident, page, page.pk, page.path, page.depth, page.numchild
+                )
             )
 
     def print_node_structure(self, nodes, *extra):
@@ -308,7 +323,7 @@ class BaseCMSTestCase:
             for node in nodes:
                 raw_attrs = [(bit, getattr(node, bit, node.attr.get(bit, "unknown"))) for bit in extra]
                 attrs = ', '.join(['%s: %r' % data for data in raw_attrs])
-                print(f"{ident}{node.title}: {attrs}")
+                print("%s%s: %s" % (ident, node.title, attrs))
                 _rec(node.children, level + 1)
 
         _rec(nodes)
@@ -331,12 +346,12 @@ class BaseCMSTestCase:
         from cms.utils.page import get_available_slug
 
         if target_site is None:
-            target_site = target_page.site
+            target_site = target_page.node.site
 
         data = {
             'position': position,
             'target': target_page.pk,
-            'source_site': page.site_id,
+            'source_site': page.node.site_id,
             'copy_permissions': 'on',
             'copy_moderation': 'on',
         }
@@ -355,6 +370,8 @@ class BaseCMSTestCase:
             pk=response_data['id'],
         )
         self.assertObjectExist(copied_page.urls.filter(language=language), slug=new_page_slug)
+        page._clear_node_cache()
+        target_page._clear_node_cache()
         return copied_page
 
     def create_homepage(self, *args, **kwargs):
@@ -363,7 +380,7 @@ class BaseCMSTestCase:
         return homepage.reload()
 
     def move_page(self, page, target_page, position="first-child"):
-        page.move_page(target_page, position)
+        page.move_page(target_page.node, position)
         return self.reload_page(page)
 
     def reload_page(self, page):
@@ -475,6 +492,8 @@ class BaseCMSTestCase:
         else:
             self.fail(f"Warning {message} not given.")
         return result
+
+    assertWarns = failUnlessWarns
 
     def load_template_from_string(self, template):
         return engines['django'].from_string(template)
@@ -671,4 +690,6 @@ class CMSTestCase(BaseCMSTestCase, testcases.TestCase):
 
 
 class TransactionCMSTestCase(CMSTestCase, testcases.TransactionTestCase):
-    pass
+    if DJANGO_4_1:
+        def assertQuerySetEqual(self, *args, **kwargs):
+            return self.assertQuerysetEqual(*args, **kwargs)

@@ -24,6 +24,7 @@ from cms.models import (
     EmptyPageContent,
     Page,
     PageContent,
+    PageUrl,
     Placeholder,
 )
 from cms.templatetags.cms_admin import GetPreviewUrl, get_page_display_name
@@ -42,28 +43,6 @@ from cms.utils.placeholder import get_placeholders
 
 
 class TemplatetagTests(CMSTestCase):
-    def test_admin_pagecontent_language_tab_urls(self):
-        # Same setup as in the templatetag test above
-        page = create_page('AdminURLTestPage English Content', 'nav_playground.html', 'en')
-        english_content = page.pagecontent_set(manager="admin_manager").first()
-        german_content = create_page_content("de", "AdminURLTestPage German Content", page)
-
-        # Try to fill the cache with partial data (this should not be possible)
-        page.get_content_obj(language='en')  # should not affect admin template tag
-        page.get_admin_content(language='en')  # Should fill the whole cache
-
-        request = RequestFactory().get('/')
-        request.current_page = page
-        template = """
-            {% load cms_tags cms_admin %}
-            {% get_admin_url_for_language page_obj 'en' %}
-            {% get_admin_url_for_language page_obj 'de' %}
-            {% get_admin_url_for_language page_obj 'fr' %}
-        """
-        output = self.render_template_obj(template, {'page_obj': page}, request)
-        self.assertIn(f'/en/admin/cms/pagecontent/{english_content.pk}/change/', output)
-        self.assertIn(f'/en/admin/cms/pagecontent/{german_content.pk}/change/', output)
-        self.assertIn(f'/en/admin/cms/pagecontent/add/?cms_page={page.pk}&language=fr', output)
 
     def test_get_preview_url(self):
         """The get_preview_url template tag returns the content preview url for its language:
@@ -79,7 +58,7 @@ class TemplatetagTests(CMSTestCase):
         self.assertIn("/de/", german_content_preview_url)
 
     def test_get_admin_tree_title(self):
-        page = create_page("page_a", "nav_playground.html", "en", slug="slug-test2")
+        page = create_page("page_a", "nav_playground.html", "en")
         self.assertEqual(get_page_display_name(page), 'page_a')
         languages = {
             1: [
@@ -106,6 +85,7 @@ class TemplatetagTests(CMSTestCase):
                 page.admin_content_cache = {'en': PageContent(menu_title="menu test2", language="en")}
                 self.assertEqual('<em>menu test2 (en)</em>', force_str(get_page_display_name(page)))
                 page.admin_content_cache = {'en': PageContent(language="en")}
+                page.urls_cache = {'en': PageUrl(slug='slug-test2')}
                 self.assertEqual('<em>slug-test2 (en)</em>', force_str(get_page_display_name(page)))
                 page.admin_content_cache = {'en': PageContent(language="en"), 'fr': EmptyPageContent('fr')}
                 self.assertEqual('<em>slug-test2 (en)</em>', force_str(get_page_display_name(page)))
@@ -690,30 +670,3 @@ class NoFixtureDatabaseTemplateTagTests(CMSTestCase):
             output = self.render_template_obj(template, {'category': Category()}, request)
         expected = 'wrapped'
         self.assertEqual(expected, output)
-
-
-class EditablePluginsTemplateTags(CMSTestCase):
-    def setUp(self):
-        self.page = create_page('Test', 'simple.html', 'en')
-        self.placeholder = self.page.get_placeholders('en')[0]
-        self.plugin = add_plugin(self.placeholder, TextPlugin, 'en', body='<b>Test</b>')
-
-    def test_render_model_plugin(self):
-        """The render_model template tags also works with a plugin."""
-        template = """{% load cms_tags %}{% render_model plugin "body" "body" %}"""
-        # The template html tags will render the object editable in the frontend
-        expectation = (
-            f'<template class="cms-plugin cms-plugin-start cms-plugin-djangocms_text_ckeditor-text-body-{self.plugin.pk} cms-render-model"></template>'
-            '&lt;b&gt;Test&lt;/b&gt;'
-            f'<template class="cms-plugin cms-plugin-end cms-plugin-djangocms_text_ckeditor-text-body-{self.plugin.pk} cms-render-model"></template>'
-        )
-
-        endpoint = get_object_edit_url(self.page.get_content_obj("en"))  # view in edit mode
-        request = RequestFactory().get(endpoint)
-        request.user = self.get_superuser()
-        request.current_page = self.page
-        request.toolbar = CMSToolbar(request)  # add toolbar
-
-        output = self.render_template_obj(template, {'plugin': self.plugin}, request)
-
-        self.assertEqual(output, expectation)

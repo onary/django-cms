@@ -13,11 +13,8 @@ from django.http import (
     HttpResponseRedirect,
 )
 from django.shortcuts import render
-from django.template.defaultfilters import title
-from django.template.response import TemplateResponse
 from django.urls import Resolver404, resolve, reverse
 from django.utils.cache import patch_cache_control
-from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.timezone import now
 from django.utils.translation import activate, get_language_from_request
 from django.views.decorators.http import require_POST
@@ -26,7 +23,8 @@ from cms.apphook_pool import apphook_pool
 from cms.cache.page import get_page_cache
 from cms.exceptions import LanguageError
 from cms.forms.login import CMSToolbarLoginForm
-from cms.models import Page, PageContent
+from cms.models import PageContent
+from cms.models.pagemodel import TreeNode
 from cms.page_rendering import (
     _handle_no_apphook,
     _handle_no_page,
@@ -35,6 +33,7 @@ from cms.page_rendering import (
 )
 from cms.toolbar.utils import get_object_preview_url, get_toolbar_from_request
 from cms.utils import get_current_site
+from cms.utils.compat import DJANGO_2_2, DJANGO_3_0, DJANGO_3_1
 from cms.utils.conf import get_cms_setting
 from cms.utils.helpers import is_editable_model
 from cms.utils.i18n import (
@@ -46,7 +45,13 @@ from cms.utils.i18n import (
     is_language_prefix_patterns_used,
 )
 from cms.utils.page import get_page_from_request
-from cms.utils.placeholder import get_declared_placeholders_for_obj, get_placeholder_conf
+
+if DJANGO_2_2:
+    from django.utils.http import (
+        is_safe_url as url_has_allowed_host_and_scheme,
+    )
+else:
+    from django.utils.http import url_has_allowed_host_and_scheme
 
 
 def _clean_redirect_url(redirect_url, language):
@@ -75,7 +80,11 @@ def details(request, slug):
             content, headers, expires_datetime = cache_content
             response = HttpResponse(content)
             response.xframe_options_exempt = True
-            response.headers = headers
+            if DJANGO_2_2 or DJANGO_3_0 or DJANGO_3_1:
+                response._headers = headers
+            else:
+                #  for django3.2 and above. response.headers replaces response._headers in earlier versions of django
+                response.headers = headers
             # Recalculate the max-age header for this cached response
             max_age = int(
                 (expires_datetime - response_timestamp).total_seconds() + 0.5)
@@ -85,8 +94,9 @@ def details(request, slug):
     # Get a Page model object from the request
     site = get_current_site()
     page = get_page_from_request(request, use_path=slug)
+    tree_nodes = TreeNode.objects.get_for_site(site)
 
-    if not page and not slug and not Page.objects.on_site(site).exists():
+    if not page and not slug and not tree_nodes.exists():
         # render the welcome page if the requested path is root "/"
         # and there's no pages
         return _render_welcome_page(request)
@@ -263,18 +273,6 @@ def render_object_structure(request, content_type_id, object_id):
     toolbar = get_toolbar_from_request(request)
     toolbar.set_object(content_type_obj)
     return render(request, 'cms/toolbar/structure.html', context)
-
-
-def render_placeholder_content(request, obj, context):
-    context["cms_placeholder_slots"] = (
-        (
-            placeholder.slot,
-            get_placeholder_conf("name", placeholder.slot, default=title(placeholder.slot)),
-            placeholder.inherit,
-        )
-        for placeholder in get_declared_placeholders_for_obj(obj)
-    )
-    return TemplateResponse(request, "cms/headless/placeholder.html", context)
 
 
 def render_object_endpoint(request, content_type_id, object_id, require_editable):

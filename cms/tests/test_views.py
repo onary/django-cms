@@ -75,7 +75,7 @@ class ViewTests(CMSTestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse('admin:cms_pagecontent_changelist'))
 
-    def test_handle_no_page_for_root_url_no_homepage(self):
+    def test_handle_no_page_for_rool_url_no_homepage(self):
         """
         Test details view when visiting root and homepage doesn't exist
         """
@@ -91,7 +91,7 @@ class ViewTests(CMSTestCase):
         if APP_MODULE in sys.modules:
             del sys.modules[APP_MODULE]
         apphooks = (
-            f'{APP_MODULE}.{APP_NAME}',
+            '%s.%s' % (APP_MODULE, APP_NAME),
         )
         page = create_page("page2", "nav_playground.html", "en")
         with self.settings(CMS_APPHOOKS=apphooks):
@@ -228,7 +228,7 @@ class ViewTests(CMSTestCase):
 
     def test_edit_permission(self):
         page = create_page("page", "nav_playground.html", "en")
-        page_content = self.get_pagecontent_obj(page)
+        page_content = self.get_page_title_obj(page)
         page_preview_url = get_object_preview_url(page_content)
         # Anon user
         response = self.client.get(page_preview_url)
@@ -289,12 +289,16 @@ class ViewTests(CMSTestCase):
             structure_url = get_object_structure_url(page_content, language='fr')
 
             response = self.client.get(edit_url)
-            expected = f"""
-                <a href="{structure_url}" class="cms-btn cms-btn-disabled" title="Toggle structure"
-                data-cms-structure-btn='{{ "url": "{structure_url}", "name": "Structure" }}'
-                data-cms-content-btn='{{ "url": "{edit_url}", "name": "Content" }}'>
+            expected = """
+                <a href="%s" class="cms-btn cms-btn-disabled" title="Toggle structure"
+                data-cms-structure-btn='{ "url": "%s", "name": "Structure" }'
+                data-cms-content-btn='{ "url": "%s", "name": "Content" }'>
                 <span class="cms-icon cms-icon-plugins"></span></a>
-            """
+            """ % (
+                structure_url,
+                structure_url,
+                edit_url,
+            )
             self.assertContains(
                 response,
                 expected,
@@ -364,18 +368,6 @@ class ViewTests(CMSTestCase):
         response = login(request)
 
         self.assertNotIn(response.url, "<script>alert('Attack')</script>")
-
-    def test_queries(self):
-        create_page("home", "simple.html", "en")
-        cms_page = create_page("dreinhardt", "simple.html", "en")
-        url = cms_page.get_absolute_url()
-        with self.assertNumQueries(5):
-            # 1. get_page_from_request: checks PageUrl
-            # 2. get page contents: PageContent
-            # 3. Check permissions
-            # 4. Get placeholders
-            # 5. Get plugins
-            self.client.get(url)
 
 
 @override_settings(ROOT_URLCONF='cms.test_utils.project.urls')

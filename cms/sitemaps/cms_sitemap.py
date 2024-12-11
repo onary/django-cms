@@ -52,7 +52,7 @@ class CMSSitemap(Sitemap):
         return (
             PageUrl.objects.get_for_site(site)
             .filter(language__in=languages, path__isnull=False, page__login_required=False)
-            .order_by("page__path")
+            .order_by('page__node__path')
             .select_related("page")
             .annotate(
                 content_pk=Subquery(

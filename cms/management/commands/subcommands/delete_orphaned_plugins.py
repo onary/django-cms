@@ -56,6 +56,8 @@ Type 'yes' to continue, or 'no' to cancel: """ % (len(uninstalled_instances), le
                     instance.delete()
 
             self.stdout.write(
-                f'Deleted instances of: \n    {len(uninstalled_instances)} uninstalled plugins  \n    {len(unsaved_instances)} plugins with unsaved instances\n'
+                'Deleted instances of: \n    %s uninstalled plugins  \n    %s plugins with unsaved instances\n' % (
+                    len(uninstalled_instances), len(unsaved_instances)
+                )
             )
             self.stdout.write('all done\n')
