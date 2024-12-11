@@ -1,5 +1,7 @@
-# -*- coding: utf-8 -*-
+from django import forms
 from django.contrib.auth.forms import AuthenticationForm
+
+from cms.test_utils.project.sampleapp.models import Category
 
 
 class LoginForm(AuthenticationForm):
@@ -11,5 +13,12 @@ class LoginForm2(AuthenticationForm):
 
 
 class LoginForm3(AuthenticationForm):
-    def __init__(self, argument, request=None, *args, **kwargs):
-        super(LoginForm3, self).__init__(request, *args, **kwargs)
+    def __init__(self, request=None, *args, **kwargs):
+        super().__init__(request, *args, **kwargs)
+
+
+class SampleWizardForm(forms.ModelForm):
+
+    class Meta:
+        model = Category
+        exclude = []

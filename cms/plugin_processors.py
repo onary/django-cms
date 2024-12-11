@@ -1,5 +1,5 @@
-# -*- coding: utf-8 -*-
 from django.utils.safestring import mark_safe
+
 
 def plugin_meta_context_processor(instance, placeholder, context):
     return {
@@ -15,6 +15,7 @@ def plugin_meta_context_processor(instance, placeholder, context):
             'instance': instance,
         }
     }
+
 
 def mark_safe_plugin_processor(instance, placeholder, rendered_content, original_context):
     return mark_safe(rendered_content)

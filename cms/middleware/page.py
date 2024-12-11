@@ -1,12 +1,10 @@
-# -*- coding: utf-8 -*-
+from django.utils.deprecation import MiddlewareMixin
 from django.utils.functional import SimpleLazyObject
-
-from cms.utils.compat.dj import MiddlewareMixin
 
 
 def get_page(request):
     from cms.appresolver import applications_page_check
-    from cms.utils.page_resolver import get_page_from_request
+    from cms.utils.page import get_page_from_request
 
     if not hasattr(request, '_current_page_cache'):
         request._current_page_cache = get_page_from_request(request)
@@ -20,4 +18,3 @@ def get_page(request):
 class CurrentPageMiddleware(MiddlewareMixin):
     def process_request(self, request):
         request.current_page = SimpleLazyObject(lambda: get_page(request))
-        return None

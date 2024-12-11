@@ -1,10 +1,9 @@
-# -*- coding: utf-8 -*-
-from django.db.models import Model
 from django.contrib.auth.models import Permission
 from django.contrib.contenttypes.models import ContentType
+from django.db.models import Model
 
 
-class ObjectPermissionBackend(object):
+class ObjectPermissionBackend:
     def has_perm(self, user_obj, perm, obj=None):
         if user_obj and user_obj.is_superuser:
             return True
@@ -24,7 +23,9 @@ class ObjectPermissionBackend(object):
         """
         Returns list of ``codename``'s of all permissions for given ``obj``.
         """
-        from cms.test_utils.project.objectpermissionsapp.models import UserObjectPermission
+        from cms.test_utils.project.objectpermissionsapp.models import (
+            UserObjectPermission,
+        )
         ctype = ContentType.objects.get_for_model(obj)
         related_name = UserObjectPermission.permission.field.related_query_name()
         user_filters = {
@@ -36,5 +37,5 @@ class ObjectPermissionBackend(object):
             .filter(**user_filters) \
             .values_list("codename", flat=True)
 
-    def authenticate(self):
+    def authenticate(self, request=None):
         return True

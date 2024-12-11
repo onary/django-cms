@@ -1,6 +1,8 @@
-var keyboard = require('../keyboard');
-var tmpl = require('../tmpl');
-var Modal = require('../cms.modal');
+import Modal from '../cms.modal';
+import $ from 'jquery';
+
+import keyboard from '../keyboard';
+import tmpl from '../tmpl';
 var template = require('./help.html');
 
 /**
@@ -9,7 +11,7 @@ var template = require('./help.html');
  * @function initHelpShortcut
  * @public
  */
-module.exports = function initHelpShortcut() {
+export default function initHelpShortcut() {
     var shortcutAreas = CMS.config.lang.shortcutAreas;
     var modal = new Modal({
         width: 600,
@@ -19,13 +21,24 @@ module.exports = function initHelpShortcut() {
         maximizable: false
     });
 
-    keyboard.setContext('cms');
-    keyboard.bind('?', function () {
+    /**
+     * openModal
+     *
+     * @private
+     * @param {Event} e
+     */
+    function openModal(e) {
+        e.preventDefault();
+
         modal.open({
             title: CMS.config.lang.shortcuts,
             width: 600,
             height: 660,
             html: tmpl(template, { shortcutAreas: shortcutAreas })
         });
-    });
-};
+    }
+
+    keyboard.setContext('cms');
+    keyboard.bind('?', openModal);
+    $(document).on('pointerup.cms', '.cms-show-shortcuts', openModal);
+}

@@ -1,5 +1,4 @@
-# -*- coding: utf-8 -*-
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from cms.cms_toolbars import ADMIN_MENU_IDENTIFIER, ADMINISTRATION_BREAK
 from cms.toolbar.items import Break
@@ -22,3 +21,12 @@ class CategoryToolbar(CMSToolbar):
         category_menu = admin_menu.get_or_create_menu('category', _('Category'), position=position)
         category_menu.add_sideframe_item(_('Categories'), url=admin_reverse('sampleapp_category_changelist'))
         category_menu.add_modal_item(_('Add Category'), url=admin_reverse('sampleapp_category_add'))
+
+
+class ToolbarWithMedia(CMSToolbar):
+
+    class Media:
+        js = ('samplemap/js/sampleapp.js',)
+        css = {
+            'all': ('samplemap/css/sampleapp.css',)
+        }

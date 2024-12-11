@@ -1,24 +1,21 @@
-# -*- coding: utf-8 -*-
-
-from django.templatetags.static import static
 from django.contrib.auth import get_permission_codename
 from django.contrib.sites.models import Site
+from django.forms.widgets import MultiWidget, Select, TextInput
 from django.urls import NoReverseMatch, reverse_lazy
-from django.forms.widgets import Select, MultiWidget, TextInput
 from django.utils.encoding import force_str
 from django.utils.html import escape, escapejs
 from django.utils.safestring import mark_safe
-from django.utils.translation import ugettext as _
 
-from cms.utils.urlutils import admin_reverse, static_with_version
-from cms.forms.utils import get_site_choices, get_page_choices
+from cms.forms.utils import get_page_choices, get_site_choices
 from cms.models import Page, PageUser
+from cms.utils.urlutils import admin_reverse, static_with_version
 
 
 class PageSelectWidget(MultiWidget):
     """A widget that allows selecting a page by first selecting a site and then
-    a page on that site in a two step process.
+    a page on that site in a two-step process.
     """
+    template_name = 'cms/widgets/pageselectwidget.html'
 
     class Media:
         js = (
@@ -31,7 +28,7 @@ class PageSelectWidget(MultiWidget):
         else:
             self.attrs = {}
         self.choices = []
-        super(PageSelectWidget, self).__init__((Select, Select, Select), attrs)
+        super().__init__((Select, Select, Select), attrs)
 
     def decompress(self, value):
         """
@@ -40,10 +37,9 @@ class PageSelectWidget(MultiWidget):
         """
         if value:
             page = Page.objects.get(pk=value)
-            site = page.site
-            return [site.pk, page.pk, page.pk]
+            return [page.site_id, page.pk, page.pk]
         site = Site.objects.get_current()
-        return [site.pk,None,None]
+        return [site.pk, None, None]
 
     def _has_changed(self, initial, data):
         # THIS IS A COPY OF django.forms.widgets.Widget._has_changed()
@@ -53,67 +49,55 @@ class PageSelectWidget(MultiWidget):
         Return True if data differs from initial.
         """
         # For purposes of seeing whether something has changed, None is
-        # the same as an empty string, if the data or inital value we get
-        # is None, replace it w/ u''.
-        if data is None or (len(data)>=2 and data[1] in [None,'']):
-            data_value = u''
+        # the same as an empty string, if the data or initial value we get
+        # is None, replace it w/ ''.
+        if data is None or (len(data) >= 2 and data[1] in [None, '']):
+            data_value = ''
         else:
             data_value = data
         if initial is None:
-            initial_value = u''
+            initial_value = ''
         else:
             initial_value = initial
         if force_str(initial_value) != force_str(data_value):
             return True
         return False
 
-    def render(self, name, value, attrs=None, **kwargs):
-        # THIS IS A COPY OF django.forms.widgets.MultiWidget.render()
-        # (except for the last line)
-
-        # value is a list of values, each corresponding to a widget
-        # in self.widgets.
-
+    def _build_widgets(self):
         site_choices = get_site_choices()
         page_choices = get_page_choices()
         self.site_choices = site_choices
         self.choices = page_choices
-        self.widgets = (Select(choices=site_choices ),
-                   Select(choices=[('', '----')]),
-                   Select(choices=self.choices, attrs={'style': "display:none;"} ),
+        self.widgets = (
+            Select(choices=site_choices),
+            Select(choices=[('', '----')]),
+            Select(choices=self.choices, attrs={'style': "display:none;"}),
         )
 
-        if not isinstance(value, list):
-            value = self.decompress(value)
-        output = []
-        final_attrs = self.build_attrs(attrs)
-        id_ = final_attrs.get('id', None)
-        for i, widget in enumerate(self.widgets):
-            try:
-                widget_value = value[i]
-            except IndexError:
-                widget_value = None
-            if id_:
-                final_attrs = dict(final_attrs, id='%s_%s' % (id_, i))
-            output.append(widget.render(name + '_%s' % i, widget_value, final_attrs))
-        output.append(r'''<script type="text/javascript">
-            var CMS = window.CMS || {};
+    def _build_script(self, name, value, attrs={}):
+        return rf"""<script type="text/javascript">
+                var CMS = window.CMS || {{}};
 
-            CMS.Widgets = CMS.Widgets || {};
-            CMS.Widgets._pageSelectWidgets = CMS.Widgets._pageSelectWidgets || [];
-            CMS.Widgets._pageSelectWidgets.push({
-                name: '%(name)s'
-            });
-        </script>''' % {
-            'name': name
-        })
-        return mark_safe(self.format_output(output))
+                CMS.Widgets = CMS.Widgets || {{}};
+                CMS.Widgets._pageSelectWidgets = CMS.Widgets._pageSelectWidgets || [];
+                CMS.Widgets._pageSelectWidgets.push({{
+                    name: '{name}'
+                }});
+            </script>"""
+
+    def get_context(self, name, value, attrs):
+        self._build_widgets()
+        context = super().get_context(name, value, attrs)
+        context['widget']['script_init'] = self._build_script(name, value, context['widget']['attrs'])
+        return context
 
     def format_output(self, rendered_widgets):
-        return u' '.join(rendered_widgets)
+        return ' '.join(rendered_widgets)
 
 
 class PageSmartLinkWidget(TextInput):
+    """Presents the user with a Select2 widget to select a page and returns the link to this page as a string."""
+    template_name = 'cms/widgets/pagesmartlinkwidget.html'
 
     class Media:
         css = {
@@ -127,7 +111,7 @@ class PageSmartLinkWidget(TextInput):
         )
 
     def __init__(self, attrs=None, ajax_view=None):
-        super(PageSmartLinkWidget, self).__init__(attrs)
+        super().__init__(attrs)
         self.ajax_url = self.get_ajax_url(ajax_view=ajax_view)
 
     def get_ajax_url(self, ajax_view):
@@ -138,30 +122,29 @@ class PageSmartLinkWidget(TextInput):
                 'You should provide an ajax_view argument that can be reversed to the PageSmartLinkWidget'
             )
 
-    def render(self, name=None, value=None, attrs=None, **kwargs):
-        final_attrs = self.build_attrs(attrs)
-        id_ = final_attrs.get('id', None)
+    def _build_script(self, name, value, attrs={}):
+        return r"""<script type="text/javascript">
+            var CMS = window.CMS || {{}};
 
-        output = [r'''<script type="text/javascript">
-            var CMS = window.CMS || {};
-
-            CMS.Widgets = CMS.Widgets || {};
+            CMS.Widgets = CMS.Widgets || {{}};
             CMS.Widgets._pageSmartLinkWidgets = CMS.Widgets._pageSmartLinkWidgets || [];
-            CMS.Widgets._pageSmartLinkWidgets.push({
-                id: '%(element_id)s',
-                text: '%(placeholder_text)s',
-                lang: '%(language_code)s',
-                url: '%(ajax_url)s'
-            });
-        </script>''' % {
-            'element_id': id_,
-            'placeholder_text': final_attrs.get('placeholder_text', ''),
-            'language_code': self.language,
-            'ajax_url': force_str(self.ajax_url)
-        }]
+            CMS.Widgets._pageSmartLinkWidgets.push({{
+                id: '{element_id}',
+                text: '{placeholder_text}',
+                lang: '{language_code}',
+                url: '{ajax_url}'
+            }});
+        </script>""".format(
+            element_id=attrs.get('id', ''),
+            placeholder_text=attrs.get('placeholder_text', ''),
+            language_code=self.language,
+            ajax_url=force_str(self.ajax_url)
+        )
 
-        output.append(super(PageSmartLinkWidget, self).render(name, value, attrs, **kwargs))
-        return mark_safe(u''.join(output))
+    def get_context(self, name, value, attrs):
+        context = super().get_context(name, value, attrs)
+        context['widget']['script_init'] = self._build_script(name, value, context['widget']['attrs'])
+        return context
 
 
 class UserSelectAdminWidget(Select):
@@ -172,15 +155,19 @@ class UserSelectAdminWidget(Select):
     Current user should be assigned to widget in form constructor as an user
     attribute.
     """
-    def render(self, name, value, attrs=None, choices=(), **kwargs):
-        output = [super(UserSelectAdminWidget, self).render(name, value, attrs, **kwargs)]
-        if hasattr(self, 'user') and (self.user.is_superuser or \
-            self.user.has_perm(PageUser._meta.app_label + '.' + get_permission_codename('add', PageUser._meta))):
+    def render(self, name, value, attrs=None, choices=(), renderer=None):
+        output = [super().render(name, value, attrs, renderer=renderer)]
+        if hasattr(self, 'user') and (
+            self.user.is_superuser or self.user.has_perm(
+                PageUser._meta.app_label + '.' + get_permission_codename('add', PageUser._meta))
+        ):
             # append + icon
             add_url = admin_reverse('cms_pageuser_add')
-            output.append(u'<a href="%s" class="add-another" id="add_id_%s" onclick="return showAddAnotherPopup(this);"> ' % \
-                    (add_url, name))
-        return mark_safe(u''.join(output))
+            output.append(
+                '<a href="%s" class="add-another" id="add_id_%s" onclick="return showAddAnotherPopup(this);"> ' %
+                (add_url, name)
+            )
+        return mark_safe(''.join(output))
 
 
 class AppHookSelect(Select):
@@ -197,9 +184,15 @@ class AppHookSelect(Select):
 
     def __init__(self, attrs=None, choices=(), app_namespaces={}):
         self.app_namespaces = app_namespaces
-        super(AppHookSelect, self).__init__(attrs, choices)
+        super().__init__(attrs, choices)
 
-    def render_option(self, selected_choices, option_value, option_label):
+    def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
+        option = super().create_option(name, value, label, selected, index, subindex, attrs)
+        if value in self.app_namespaces:
+            option['attrs']['data-namespace'] = escape(self.app_namespaces[value])
+        return option
+
+    def _build_option(self, selected_choices, option_value, option_label):
         if option_value is None:
             option_value = ''
         option_value = force_str(option_value)
@@ -215,13 +208,11 @@ class AppHookSelect(Select):
             data_html = mark_safe(' data-namespace="%s"' % escape(self.app_namespaces[option_value]))
         else:
             data_html = ''
+        return option_value, selected_html, data_html, force_str(option_label)
 
-        return '<option value="%s"%s%s>%s</option>' % (
-            option_value,
-            selected_html,
-            data_html,
-            force_str(option_label),
-        )
+    def render_option(self, selected_choices, option_value, option_label):
+        option_data = self._build_option(selected_choices, option_value, option_label)
+        return '<option value="%s"%s%s>%s</option>' % option_data
 
 
 class ApplicationConfigSelect(Select):
@@ -235,6 +226,7 @@ class ApplicationConfigSelect(Select):
     A stub 'add-another' link is created and filled in with the correct URL by the same
     javascript.
     """
+    template_name = 'cms/widgets/applicationconfigselect.html'
 
     class Media:
         js = (
@@ -243,25 +235,31 @@ class ApplicationConfigSelect(Select):
 
     def __init__(self, attrs=None, choices=(), app_configs={}):
         self.app_configs = app_configs
-        super(ApplicationConfigSelect, self).__init__(attrs, choices)
+        super().__init__(attrs, choices)
 
-    def render(self, name, value, attrs=None, choices=(), **kwargs):
-        output = list(super(ApplicationConfigSelect, self).render(name, value, attrs, **kwargs))
-        output.append('<script>\n')
-        output.append('var apphooks_configuration = {\n')
+    def _build_script(self, name, value, attrs={}):
+        configs = []
+        urls = []
         for application, cms_app in self.app_configs.items():
-            output.append("'%s': [%s]," % (application, ",".join(["['%s', '%s']" % (config.pk, escapejs(escape(config))) for config in cms_app.get_configs()])))  # noqa
-        output.append('\n};\n')
-        output.append('var apphooks_configuration_url = {\n')
+            configs.append("'{}': [{}]".format(application, ",".join(
+                ["['{}', '{}']".format(config.pk, escapejs(escape(config))) for config in cms_app.get_configs()])))  # noqa
         for application, cms_app in self.app_configs.items():
-            output.append("'%s': '%s'," % (application, cms_app.get_config_add_url()))
-        output.append('\n};\n')
-        output.append('var apphooks_configuration_value = \'%s\';\n' % value)
-        output.append('</script>')
+            urls.append(f"'{application}': '{cms_app.get_config_add_url()}'")
+        return r"""<script type="text/javascript">
+            var apphooks_configuration = {{
+                {apphooks_configurations}
+            }};
+            var apphooks_configuration_url = {{
+                {apphooks_url}
+            }};
+            var apphooks_configuration_value = '{apphooks_value}';
+        </script>""".format(
+            apphooks_configurations=','.join(configs),
+            apphooks_url=','.join(urls),
+            apphooks_value=value,
+        )
 
-        related_url = ''
-        output.append('<a href="%s" class="add-another" id="add_%s" onclick="return showAddAnotherPopup(this);"> '
-                      % (related_url, name))
-        output.append('<img src="%s" width="10" height="10" alt="%s"/></a>'
-                      % (static('admin/img/icon_addlink.gif'), _('Add Another')))
-        return mark_safe(''.join(output))
+    def get_context(self, name, value, attrs):
+        context = super().get_context(name, value, attrs)
+        context['widget']['script_init'] = self._build_script(name, value, context['widget']['attrs'])
+        return context

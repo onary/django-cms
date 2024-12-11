@@ -1,15 +1,14 @@
-# -*- coding: utf-8 -*-
 from django.conf import settings
 
-from cms.utils import get_cms_setting
+from cms.utils.conf import get_cms_setting
 
 
 def _site_cache_key(lang):
-    return "%s-%s" %(get_cms_setting('SITE_CHOICES_CACHE_KEY'), lang)
+    return "{}-{}".format(get_cms_setting('SITE_CHOICES_CACHE_KEY'), lang)
 
 
 def _page_cache_key(lang):
-    return "%s-%s" %(get_cms_setting('PAGE_CHOICES_CACHE_KEY'), lang)
+    return "{}-{}".format(get_cms_setting('PAGE_CHOICES_CACHE_KEY'), lang)
 
 
 def _clean_many(prefix):
@@ -17,9 +16,9 @@ def _clean_many(prefix):
     keys = []
     if settings.USE_I18N:
         for lang in [language[0] for language in settings.LANGUAGES]:
-            keys.append("%s-%s" %(prefix, lang))
+            keys.append(f"{prefix}-{lang}")
     else:
-        keys = ["%s-%s" %(prefix, settings.LANGUAGE_CODE)]
+        keys = [f"{prefix}-{settings.LANGUAGE_CODE}"]
     cache.delete_many(keys)
 
 

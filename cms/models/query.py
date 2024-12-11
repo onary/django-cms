@@ -1,47 +1,93 @@
-# -*- coding: utf-8 -*-
-from django.db.models import Q
-from django.contrib.sites.models import Site
+import warnings
+
 from treebeard.mp_tree import MP_NodeQuerySet
-from cms.publisher.query import PublisherQuerySet
+
 from cms.exceptions import NoHomeFound
-from django.utils import timezone
+from cms.utils.compat.warnings import RemovedInDjangoCMS43Warning
 
 
-class PageQuerySet(MP_NodeQuerySet, PublisherQuerySet):
+class PageQuerySet(MP_NodeQuerySet):
+
+    node_warning = ("As of django CMS 4.2 the Page model does not have a node property anymore. "
+                    "Use the related fields directly.")
+
+    def get_descendants(self, parent=None):
+        if parent is None:
+            return self.all()
+
+        if parent.is_leaf():
+            # leaf nodes have no children
+            return self.none()
+        return self.filter(path__startswith=parent.path, depth__gte=parent.depth)
+
     def on_site(self, site=None):
-        if not site:
-            try:
-                site = Site.objects.get_current()
-            except Site.DoesNotExist:
-                site = None
+        from cms.utils import get_current_site
+
+        if site is None:
+            site = get_current_site()
         return self.filter(site=site)
-
-    def all_root(self):
-        """
-        Return a queryset with pages that don't have parents, a.k.a. root. For
-        all sites - used in frontend
-        """
-        return self.filter(parent__isnull=True)
-
-    def published(self, language=None, site=None):
-
-        if language:
-            pub = self.on_site(site).filter(
-                Q(publication_date__lte=timezone.now()) | Q(publication_date__isnull=True),
-                Q(publication_end_date__gt=timezone.now()) | Q(publication_end_date__isnull=True),
-                title_set__published=True, title_set__language=language
-            )
-        else:
-            pub = self.on_site(site).filter(
-                Q(publication_date__lte=timezone.now()) | Q(publication_date__isnull=True),
-                Q(publication_end_date__gt=timezone.now()) | Q(publication_end_date__isnull=True),
-                title_set__published=True
-            )
-        return pub
 
     def get_home(self, site=None):
         try:
-            home = self.published(site=site).all_root().order_by("path")[0]
-        except IndexError:
-            raise NoHomeFound('No Root page found. Publish at least one page!')
+            home = self.on_site(site).distinct().get(is_home=True)
+        except self.model.DoesNotExist:
+            raise NoHomeFound('No Root page found')
         return home
+
+    def has_apphooks(self):
+        """
+        Returns True if any page on this queryset has an apphook attached.
+        """
+        return self.exclude(application_urls=None).exclude(application_urls='').exists()
+
+    def delete_fast(self):
+        # calls django's delete instead of the one from treebeard
+        super(MP_NodeQuerySet, self).delete()
+
+    def root_only(self):
+        return self.filter(depth=1)
+
+    def select_related(self, *fieldnames):
+        modified = []
+        for f in fieldnames:
+            if isinstance(f, str) and f.startswith('node'):
+                warnings.warn(
+                    self.node_warning,
+                    RemovedInDjangoCMS43Warning,
+                    stacklevel=2,
+                )
+                if f != 'node':
+                    modified.append(f.replace('node__', ''))
+            else:
+                modified.append(f)
+        return super().select_related(*modified)
+
+    def filter(self, *args, **kwargs):
+        modified = {}
+        for key, val in kwargs.items():
+            if isinstance(key, str) and key.startswith('node'):
+                warnings.warn(
+                    self.node_warning,
+                    RemovedInDjangoCMS43Warning,
+                    stacklevel=2,
+                )
+                if key == 'node':
+                    continue
+                modified[key[6:]] = val
+            else:
+                modified[key] = val
+        return super().filter(*args, **modified)
+
+    def order_by(self, *fieldnames):
+        modified = []
+        for f in fieldnames:
+            if isinstance(f, str) and f.startswith("node__"):
+                warnings.warn(
+                    self.node_warning,
+                    RemovedInDjangoCMS43Warning,
+                    stacklevel=2,
+                )
+                modified.append(f[6:])
+            else:
+                modified.append(f)
+        return super().order_by(*fieldnames)

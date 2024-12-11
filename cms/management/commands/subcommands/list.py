@@ -1,6 +1,3 @@
-# -*- coding: utf-8 -*-
-from __future__ import absolute_import, print_function, unicode_literals
-
 from cms.models import Page
 from cms.models.pluginmodel import CMSPlugin
 from cms.plugin_pool import plugin_pool
@@ -17,24 +14,23 @@ class ListApphooksCommand(SubcommandsCommand):
             Page.objects.exclude(application_urls='').exclude(
                 application_urls__isnull=True
             ).values_list(
-                'application_urls', 'publisher_is_draft', 'application_namespace'
+                'application_urls', 'application_namespace'
             )
         )
         apphooks = {}
-        for apphook, is_draft, application_namespace in urls:
-            state = 'draft' if is_draft else 'published'
+        for apphook, application_namespace in urls:
             if apphook in apphooks:
-                apphooks[apphook][0].append(state)
+                apphooks[apphook][0].append('active')
             else:
-                apphooks[apphook] = [[state], application_namespace]
+                apphooks[apphook] = [['active'], application_namespace]
         for apphook, attributes in apphooks.items():
             attributes[0].sort()
             if attributes[1]:
-                self.stdout.write('{0}[instance: {1}] ({2})\n'.format(
+                self.stdout.write('{}[instance: {}] ({})\n'.format(
                     apphook, attributes[1], '/'.join(attributes[0])
                 ))
             else:
-                self.stdout.write('{0} ({1})\n'.format(
+                self.stdout.write('{} ({})\n'.format(
                     apphook, '/'.join(attributes[0])
                 ))
 
@@ -103,8 +99,7 @@ class ListPluginsCommand(SubcommandsCommand):
                 self.stdout.write('    unsaved instance(s) : %s  \n' % unsaved_instances)
 
             else:
-                self.stdout.write('  model      : %s.%s  \n' %
-                    (plugin_model.__module__, plugin_model.__name__))
+                self.stdout.write(f'  model      : {plugin_model.__module__}.{plugin_model.__name__}  \n')
                 if unsaved_instances:
                     self.stdout.write(self.style.ERROR('  ERROR      : %s unsaved instance(s) \n' % unsaved_instances))
 

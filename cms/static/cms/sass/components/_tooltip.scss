@@ -1,10 +1,11 @@
 //##############################################################################
 // TOOLTIP
+@use "sass:math";
 
 // used when hover over plugins in edit mode
 .cms-tooltip,
 .cms-tooltip-touch {
-    @include icon(pencil);
+    @include icon(edit);
     visibility: hidden;
     position: absolute;
     top: 0;
@@ -23,8 +24,8 @@
         @extend %icon;
         font-size: $tooltip-icon-size;
         top: 50%;
-        left: ($tooltip-icon-area-size - $tooltip-icon-size) / 2;
-        margin-top: -($tooltip-icon-size / 2);
+        left: math.div($tooltip-icon-area-size - $tooltip-icon-size, 2);
+        margin-top: math.div(-$tooltip-icon-size, 2);
         position: absolute;
     }
 

@@ -1,8 +1,4 @@
-# -*- coding: utf-8 -*-
-from django.contrib.auth import get_user_model
-
-from cms.utils import get_cms_setting
-
+from cms.utils.conf import get_cms_setting
 
 PERMISSION_KEYS = [
     'add_page', 'change_page', 'change_page_advanced_settings',
@@ -12,13 +8,12 @@ PERMISSION_KEYS = [
 
 
 def get_cache_key(user, key):
-    username = getattr(user, get_user_model().USERNAME_FIELD)
-    return "%s:permission:%s:%s" % (
-        get_cms_setting('CACHE_PREFIX'), username, key)
+    return "%s:permission:%d:%s" % (
+        get_cms_setting('CACHE_PREFIX'), user.pk or 0, key)
 
 
 def get_cache_permission_version_key():
-    return "%s:permission:version" % (get_cms_setting('CACHE_PREFIX'),)
+    return "{}:permission:version".format(get_cms_setting('CACHE_PREFIX'))
 
 
 def get_cache_permission_version():
@@ -44,6 +39,7 @@ def set_permission_cache(user, key, value):
     all of them can be cleaned when clean_permission_cache gets called.
     """
     from django.core.cache import cache
+
     # store this key, so we can clean it when required
     cache_key = get_cache_key(user, key)
     cache.set(cache_key, value,

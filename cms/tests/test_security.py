@@ -2,10 +2,9 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.http import QueryDict
 
-from cms.api import create_page, add_plugin
+from cms.api import add_plugin, create_page
 from cms.models.pluginmodel import CMSPlugin
 from cms.test_utils.testcases import CMSTestCase
-from cms.test_utils.project.placeholderapp.models import Example1
 
 
 class SecurityTests(CMSTestCase):
@@ -15,7 +14,7 @@ class SecurityTests(CMSTestCase):
 
     def get_data(self):
         page = create_page("page", "nav_playground.html", "en")
-        placeholder = page.placeholders.get(slot='body')
+        placeholder = page.get_placeholders('en').get(slot='body')
         superuser = self.get_superuser()
         staff = self.get_staff_user_with_no_permissions()
         return page, placeholder, superuser, staff
@@ -64,7 +63,7 @@ class SecurityTests(CMSTestCase):
             'plugin_id': plugin.pk,
             'body': 'newbody',
         }
-        self.assertEqual(plugin.body, 'body') # check the body is as expected.
+        self.assertEqual(plugin.body, 'body')  # check the body is as expected.
         # log the user out, try to edit the plugin
         self.client.logout()
         endpoint = self.get_change_plugin_uri(plugin)
@@ -161,7 +160,7 @@ class SecurityTests(CMSTestCase):
         """
         page, placeholder, superuser, staff = self.get_data()
         plugin = add_plugin(placeholder, 'TextPlugin', 'en', body='body')
-        endpoint = self.get_change_plugin_uri(plugin, container=Example1)
+        endpoint = self.get_change_plugin_uri(plugin)
         plugin_data = {
             'body': 'newbody',
             'language': 'en',
@@ -200,7 +199,7 @@ class SecurityTests(CMSTestCase):
         }
         plugin = self.reload(plugin)
         self.assertEqual(plugin.body, 'body')
-        endpoint = self.get_delete_plugin_uri(plugin, container=Example1)
+        endpoint = self.get_delete_plugin_uri(plugin)
         # log the user out and try to remove a plugin using PlaceholderAdmin
         self.client.logout()
         response = self.client.post(endpoint, plugin_data)

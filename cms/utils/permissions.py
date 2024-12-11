@@ -1,21 +1,19 @@
-# -*- coding: utf-8 -*-
+import warnings
 from collections import defaultdict
 from contextlib import contextmanager
-from functools import wraps
+from functools import lru_cache, wraps
 from threading import local
 
 from django.contrib.auth import get_permission_codename, get_user_model
 from django.contrib.auth.models import Group
-from django.contrib.sites.models import Site
 from django.db.models import Q
-# from django.utils.decorators import available_attrs
 
-from functools import lru_cache
-from cms.constants import ROOT_USER_LEVEL
+from cms.constants import ROOT_USER_LEVEL, SCRIPT_USERNAME
 from cms.exceptions import NoPermissionsException
-from cms.models import (Page, PagePermission, GlobalPagePermission)
+from cms.models import GlobalPagePermission, PagePermission
+from cms.utils.compat.dj import available_attrs
 from cms.utils.conf import get_cms_setting
-
+from cms.utils.page import get_clean_username
 
 # thread local support
 _thread_locals = local()
@@ -34,6 +32,14 @@ def get_current_user():
     Returns current user, or None
     """
     return getattr(_thread_locals, 'user', None)
+
+
+def get_current_user_name():
+    current_user = get_current_user()
+
+    if not current_user:
+        return SCRIPT_USERNAME
+    return get_clean_username(current_user)
 
 
 @contextmanager
@@ -128,6 +134,7 @@ def get_user_permission_level(user, site):
             PagePermission
             .objects
             .get_with_change_permissions(user, site)
+            .select_related('page')
             .order_by('page__path')
         )[0]
     except IndexError:
@@ -137,7 +144,7 @@ def get_user_permission_level(user, site):
 
 
 def cached_func(func):
-    @wraps(func)
+    @wraps(func, assigned=available_attrs(func))
     def cached_func(user, *args, **kwargs):
         func_cache_name = '_djangocms_cached_func_%s' % func.__name__
 
@@ -149,6 +156,20 @@ def cached_func(func):
     # Allows us to access the un-cached function
     cached_func.without_cache = func
     return cached_func
+
+
+def clear_func_cache(user, func):
+    func_cache_name = '_djangocms_cached_func_%s' % func.__name__
+    if hasattr(user, func_cache_name):
+        delattr(user, func_cache_name)
+
+
+def clear_permission_lru_caches(user):
+    """
+    Clear all python lru caches used by the permission system
+    """
+    clear_func_cache(user, get_global_actions_for_user)
+    clear_func_cache(user, get_page_actions_for_user)
 
 
 @cached_func
@@ -167,20 +188,20 @@ def get_global_actions_for_user(user, site):
 
 @cached_func
 def get_page_actions_for_user(user, site):
-    actions = defaultdict(set)
+    actions = defaultdict(list)
+
     page_permissions = (
         PagePermission
         .objects
-        .get_with_site(user, site_id=site.pk)
-        .order_by('page__path')
+        .with_user(user)
         .select_related('page')
+        .filter(page__site=site)
     )
 
-    for permission in page_permissions.iterator():
-        page_ids = frozenset(permission.get_page_ids())
-
-        for action in permission.get_configured_actions():
-            actions[action].update(page_ids)
+    for perm in page_permissions.iterator():
+        permission_tuple = perm.grant_on, perm.page.path
+        for action in perm.get_configured_actions():
+            actions[action].append(permission_tuple)
     return actions
 
 
@@ -193,11 +214,27 @@ def has_global_permission(user, site, action, use_cache=True):
 
 
 def has_page_permission(user, page, action, use_cache=True):
-    if use_cache:
-        actions = get_page_actions_for_user(user, page.site)
-    else:
-        actions = get_page_actions_for_user.without_cache(user, page.site)
-    return page.pk in actions[action]
+    import warnings
+
+    from cms.utils.compat.warnings import RemovedInDjangoCMS43Warning
+    from cms.utils.page_permissions import has_generic_permission
+
+    warnings.warn("has_page_permission is deprecated and will be removed in django CMS 4.3. "
+                  "Use cms.utils.page_permissions.has_generic_permission instead.",
+                  RemovedInDjangoCMS43Warning, stacklevel=2)
+
+    action_map = {
+        "change": "change_page",
+        "add": "add_page",
+        "move": "move_page",
+        "publish": "publish_page",
+        "delete": "delete_page",
+        "view": "view_page",
+    }
+    if action in action_map:
+        action = action_map[action]
+
+    return has_generic_permission(page, user, action, site=page.site, check_global=False, use_cache=use_cache)
 
 
 def get_subordinate_users(user, site):
@@ -230,7 +267,7 @@ def get_subordinate_users(user, site):
         Will return [user, C, X, D, Y, Z]. W was created by user, but is also
         assigned to higher level.
     """
-    from cms.utils.page_permissions import get_change_permissions_id_list
+    from cms.utils.page_permissions import get_change_permissions_perm_tuples
 
     try:
         user_level = get_user_permission_level(user, site)
@@ -239,9 +276,7 @@ def get_subordinate_users(user, site):
         # return only staff users created by user
         # whose page permission record has no page attached.
         qs = get_user_model().objects.distinct().filter(
-                Q(is_staff=True) &
-                Q(pageuser__created_by=user) &
-                Q(pagepermission__page=None)
+            Q(is_staff=True) & Q(pageuser__created_by=user) & Q(pagepermission__page=None)
         )
         qs = qs.exclude(pk=user.pk).exclude(groups__user__pk=user.pk)
         return qs
@@ -249,13 +284,18 @@ def get_subordinate_users(user, site):
     if user_level == ROOT_USER_LEVEL:
         return get_user_model().objects.all()
 
-    page_id_allow_list = get_change_permissions_id_list(user, site, check_global=False)
+    from cms.models import PermissionTuple
+    allow_list = Q()
+    for perm_tuple in get_change_permissions_perm_tuples(user, site, check_global=False):
+        allow_list |= PermissionTuple(perm_tuple).allow_list("pagepermission__page")
 
     # normal query
     qs = get_user_model().objects.distinct().filter(
-        Q(is_staff=True) &
-        (Q(pagepermission__page__id__in=page_id_allow_list) & Q(pagepermission__page__depth__gte=user_level))
-        | (Q(pageuser__created_by=user) & Q(pagepermission__page=None))
+        Q(is_staff=True) & (
+            allow_list & Q(pagepermission__page__depth__gte=user_level)
+        ) | (
+            Q(pageuser__created_by=user) & Q(pagepermission__page=None)
+        )
     )
     qs = qs.exclude(pk=user.pk).exclude(groups__user__pk=user.pk)
     return qs
@@ -266,7 +306,7 @@ def get_subordinate_groups(user, site):
     Similar to get_subordinate_users, but returns queryset of Groups instead
     of Users.
     """
-    from cms.utils.page_permissions import get_change_permissions_id_list
+    from cms.utils.page_permissions import get_change_permissions_perm_tuples
 
     try:
         user_level = get_user_permission_level(user, site)
@@ -278,8 +318,7 @@ def get_subordinate_groups(user, site):
             Group
             .objects
             .filter(
-                Q(pageusergroup__created_by=user) &
-                Q(pagepermission__page__isnull=True)
+                Q(pageusergroup__created_by=user) & Q(pagepermission__page__isnull=True)
             )
             .distinct()
         )
@@ -290,50 +329,30 @@ def get_subordinate_groups(user, site):
     if user_level == ROOT_USER_LEVEL:
         return Group.objects.all()
 
-    page_id_allow_list = get_change_permissions_id_list(user, site, check_global=False)
+    from cms.models import PermissionTuple
+    allow_list = Q()
+    for perm_tuple in get_change_permissions_perm_tuples(user, site, check_global=False):
+        allow_list |= PermissionTuple(perm_tuple).allow_list("pagepermission__page")
 
     return Group.objects.distinct().filter(
-        (Q(pagepermission__page__id__in=page_id_allow_list) & Q(pagepermission__page__depth__gte=user_level))
-        | (Q(pageusergroup__created_by=user) & Q(pagepermission__page__isnull=True))
+        (
+            allow_list & Q(pagepermission__page__depth__gte=user_level)
+        ) | (
+            Q(pageusergroup__created_by=user) & Q(pagepermission__page__isnull=True)
+        )
     )
-
-
-def load_ancestors(pages):
-    """
-    Loads the ancestors, children and descendants cache for a set of pages.
-    :param pages: A queryset of pages to examine
-    :return: The list of pages, including ancestors
-    """
-    pages_by_id = dict((page.pk, page) for page in pages)
-    pages_list = list(pages)
-    # Ensure that all parent pages are present so that inheritance will work
-    # For most use cases, this should not actually do any work
-    missing = list(pages)
-    while missing:
-        page = missing.pop()
-        page.ancestors_descending = []
-        page._cached_descendants = []
-        if page.parent_id and page.parent_id not in pages_by_id:
-            pages_list.append(page.parent)
-            pages_by_id[page.parent_id] = page.parent
-            missing.append(page.parent)
-    pages_list.sort(key=lambda page: page.path)
-    for page in pages_list:
-        if page.parent_id:
-            parent = pages_by_id[page.parent_id]
-            page.ancestors_descending = parent.ancestors_descending + [parent]
-            for ancestor in page.ancestors_descending:
-                ancestor._cached_descendants.append(page)
-        else:
-            page.ancestors_descending = []
-        page.ancestors_ascending = list(reversed(page.ancestors_descending))
-    return pages_list
 
 
 def get_view_restrictions(pages):
     """
     Load all view restrictions for the pages
     """
+
+    from cms.utils.compat.warnings import RemovedInDjangoCMS43Warning
+
+    warnings.warn("get_view_restrictions will be removed in django CMS 4.3",
+                  RemovedInDjangoCMS43Warning, stacklevel=2)
+
     restricted_pages = defaultdict(list)
 
     if not get_cms_setting('PERMISSION'):
@@ -343,15 +362,11 @@ def get_view_restrictions(pages):
     if not pages:
         return restricted_pages
 
-    is_public_pages = not pages[0].publisher_is_draft
-
-    if is_public_pages:
-        # Always use draft pages!!!
-        draft_ids = (page.publisher_public_id for page in pages)
-        pages = Page.objects.filter(pk__in=draft_ids).select_related('parent')
-
-    pages_list = load_ancestors(pages)
-    pages_by_id = dict((page.pk, page) for page in pages_list)
+    pages_by_id = {}
+    for page in pages:
+        if page.is_root():
+            page._set_hierarchy(pages)
+        pages_by_id[page.pk] = page
 
     page_permissions = PagePermission.objects.filter(
         page__in=pages_by_id,
@@ -360,46 +375,11 @@ def get_view_restrictions(pages):
 
     for perm in page_permissions:
         # set internal fk cache to our page with loaded ancestors and descendants
-        perm._page_cache = pages_by_id[perm.page_id]
+        PagePermission.page.field.set_cached_value(perm, pages_by_id[perm.page_id])
 
-        for page_id in perm.get_page_ids():
+        for page_id in perm._get_page_ids():
             restricted_pages[page_id].append(perm)
     return restricted_pages
-
-
-def get_user_sites_queryset(user):
-    """
-    Returns queryset of all sites available for given user.
-
-    1.  For superuser always returns all sites.
-    2.  For global user returns all sites he haves in global page permissions
-        together with any sites he is assigned to over an page.
-    3.  For standard user returns just sites he is assigned to over pages.
-    """
-    qs = Site.objects.all()
-
-    if not get_cms_setting('PERMISSION') or user.is_superuser:
-        return qs
-
-    global_ids = GlobalPagePermission.objects.with_user(user).filter(
-        Q(can_add=True) | Q(can_change=True)
-    ).values_list('id', flat=True)
-
-    query = Q()
-    if global_ids:
-        query = Q(globalpagepermission__id__in=global_ids)
-        # haves some global permissions assigned
-        if not qs.filter(query).exists():
-            # haves global permissions, but none of sites is specified,
-            # so he haves access to all sites
-            return qs
-    # add some pages if he has permission to add / change them
-    query |= (
-        Q(Q(djangocms_pages__pagepermission__user=user) |
-          Q(djangocms_pages__pagepermission__group__user=user)) &
-        Q(Q(djangocms_pages__pagepermission__can_add=True) | Q(djangocms_pages__pagepermission__can_change=True))
-    )
-    return qs.filter(query).distinct()
 
 
 def has_plugin_permission(user, plugin_type, permission_type):

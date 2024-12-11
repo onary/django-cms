@@ -1,33 +1,29 @@
-# -*- coding: utf-8 -*-
 import sys
 
-from django.contrib.admin.models import CHANGE, LogEntry
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
-from django.contrib.contenttypes.models import ContentType
 from django.contrib.sites.models import Site
+from django.core import checks
 from django.core.cache import cache
-from django.urls import clear_url_caches, reverse, resolve, NoReverseMatch
+from django.core.checks.urls import check_url_config
 from django.test.utils import override_settings
-import six
+from django.urls import NoReverseMatch, clear_url_caches, resolve, reverse
 from django.utils.timezone import now
+from django.utils.translation import override as force_language
 
 from cms.admin.forms import AdvancedSettingsForm
-from cms.api import create_page, create_title
+from cms.api import create_page, create_page_content
 from cms.app_base import CMSApp
 from cms.apphook_pool import apphook_pool
 from cms.appresolver import applications_page_check, clear_app_resolvers, get_app_patterns
-from cms.models import Title, Page
+from cms.middleware.page import get_page
+from cms.models import PageContent
 from cms.test_utils.project.placeholderapp.models import Example1
 from cms.test_utils.testcases import CMSTestCase
 from cms.tests.test_menu_utils import DumbPageLanguageUrl
 from cms.toolbar.toolbar import CMSToolbar
-from cms.utils.conf import get_cms_setting
-from cms.utils.i18n import force_language
-from cms.utils.urlutils import admin_reverse
 from menus.menu_pool import menu_pool
 from menus.utils import DefaultLanguageChanger
-
 
 APP_NAME = 'SampleApp'
 NS_APP_NAME = 'NamespacedApp'
@@ -78,49 +74,42 @@ class ApphooksTestCase(CMSTestCase):
             if module in sys.modules:
                 del sys.modules[module]
 
-    def _fake_logentry(self, instance_id, user, text, model=Page):
-        LogEntry.objects.log_action(
-            user_id=user.id,
-            content_type_id=ContentType.objects.get_for_model(model).pk,
-            object_id=instance_id,
-            object_repr=text,
-            action_flag=CHANGE,
-        )
-        entry = LogEntry.objects.filter(user=user, action_flag__in=(CHANGE,))[0]
-        session = self.client.session
-        session['cms_log_latest'] = entry.pk
-        session.save()
-
-    def create_base_structure(self, apphook, title_langs, namespace=None):
+    def create_base_structure(self, apphook, content_langs, namespace=None):
         self.apphook_clear()
         superuser = get_user_model().objects.create_superuser('admin', 'admin@admin.com', 'admin')
         self.superuser = superuser
         page = create_page("home", "nav_playground.html", "en",
-                           created_by=superuser, published=True)
-        create_title('de', page.get_title(), page)
-        page.publish('de')
+                           created_by=superuser)
+        create_page_content('de', page.get_title(), page)
         child_page = create_page("child_page", "nav_playground.html", "en",
-                                 created_by=superuser, published=True, parent=page)
-        create_title('de', child_page.get_title(), child_page)
-        child_page.publish('de')
+                                 created_by=superuser, parent=page)
+        create_page_content('de', child_page.get_title(), child_page)
         child_child_page = create_page("child_child_page", "nav_playground.html",
-                                       "en", created_by=superuser, published=True, parent=child_page, apphook=apphook,
+                                       "en", created_by=superuser, parent=child_page, apphook=apphook,
                                        apphook_namespace=namespace)
-        create_title("de", child_child_page.get_title(), child_child_page)
-        child_child_page.publish('de')
+        create_page_content("de", child_child_page.get_title(), child_child_page)
         # publisher_public is set to draft on publish, issue with onetoone reverse
         child_child_page = self.reload(child_child_page)
 
-        if isinstance(title_langs, six.string_types):
-            titles = child_child_page.publisher_public.get_title_obj(title_langs)
+        if isinstance(content_langs, str):
+            contents = child_child_page.get_content_obj(content_langs)
         else:
-            titles = [child_child_page.publisher_public.get_title_obj(l) for l in title_langs]
+            contents = [child_child_page.get_content_obj(lang) for lang in content_langs]
 
         self.reload_urls()
 
-        return titles
+        return contents
 
-    @override_settings(CMS_APPHOOKS=['%s.%s' % (APP_MODULE, APP_NAME)])
+    @override_settings(ROOT_URLCONF='cms.test_utils.project.fourth_urls_for_apphook_tests')
+    def test_check_url_config(self):
+        """
+        Test for urls config check.
+        """
+        self.apphook_clear()
+        result = check_url_config(None)
+        self.assertEqual(len(result), 0)
+
+    @override_settings(CMS_APPHOOKS=[f'{APP_MODULE}.{APP_NAME}'])
     def test_explicit_apphooks(self):
         """
         Test explicit apphook loading with the CMS_APPHOOKS setting.
@@ -143,24 +132,21 @@ class ApphooksTestCase(CMSTestCase):
         self.apphook_clear()
         hooks = apphook_pool.get_apphooks()
         app_names = [hook[0] for hook in hooks]
-        self.assertEqual(len(hooks), 8)
+        self.assertEqual(len(hooks), 9)
         self.assertIn(NS_APP_NAME, app_names)
         self.assertIn(APP_NAME, app_names)
         self.apphook_clear()
 
-    def test_apphook_on_root(self):
+    def test_apphook_on_homepage(self):
         self.apphook_clear()
         superuser = get_user_model().objects.create_superuser('admin', 'admin@admin.com', 'admin')
-        page = create_page("apphooked-page", "nav_playground.html", "en",
-                           created_by=superuser, published=True, apphook="SampleApp")
-        blank_page = create_page("not-apphooked-page", "nav_playground.html", "en",
-                                 created_by=superuser, published=True, apphook="", slug='blankapp')
-        english_title = page.title_set.all()[0]
+        page = self.create_homepage("apphooked-page", "nav_playground.html", "en",
+                                    created_by=superuser, apphook="SampleApp")
+        create_page("not-apphooked-page", "nav_playground.html", "en",
+                    created_by=superuser, apphook="", slug='blankapp')
+        english_title = page.pagecontent_set.all()[0]
         self.assertEqual(english_title.language, 'en')
-        create_title("de", "aphooked-page-de", page)
-        self.assertTrue(page.publish('en'))
-        self.assertTrue(page.publish('de'))
-        self.assertTrue(blank_page.publish('en'))
+        create_page_content("de", "aphooked-page-de", page)
         with force_language("en"):
             response = self.client.get(self.get_pages_root())
         self.assertTemplateUsed(response, 'sampleapp/home.html')
@@ -170,15 +156,44 @@ class ApphooksTestCase(CMSTestCase):
 
         self.apphook_clear()
 
+    def test_apphook_without_landing_page(self):
+        """test rendering the apphook without landing page.
+
+        tests for https://github.com/django-cms/django-cms/issues/7765
+        """
+        from django.contrib.contenttypes.models import ContentType
+
+        from cms import views
+        from cms.utils.urlutils import admin_reverse
+
+        APP_NAME = 'SampleAppWithoutLandingPage'
+        [content] = self.create_base_structure(
+            APP_NAME, ["en"], "apphook-without-landing"
+        )
+        content_type = ContentType.objects.get(app_label='cms', model='pagecontent')
+        endpoint = admin_reverse('cms_placeholder_render_object_edit', args=(content_type.pk, content.pk,))
+        # make sure, we do not get views.details as this always uses the
+        # published page content
+        self.assertIsNot(endpoint, views.details)
+
+    @override_settings(ROOT_URLCONF='cms.test_utils.project.urls_for_apphook_tests')
+    def test_apphook_does_not_crash_django_checks(self):
+        # This test case reproduced the situation causing the error reported in issue #6717.
+        self.apphook_clear()
+        superuser = get_user_model().objects.create_superuser('admin', 'admin@admin.com', 'admin')
+        create_page("apphooked-page", "nav_playground.html", "en",
+                    created_by=superuser, apphook="SampleApp")
+        self.reload_urls()
+        checks.run_checks()
+        self.apphook_clear()
+
     @override_settings(ROOT_URLCONF='cms.test_utils.project.urls_for_apphook_tests')
     def test_apphook_on_root_reverse(self):
         self.apphook_clear()
         superuser = get_user_model().objects.create_superuser('admin', 'admin@admin.com', 'admin')
         page = create_page("apphooked-page", "nav_playground.html", "en",
-                           created_by=superuser, published=True, apphook="SampleApp")
-        create_title("de", "aphooked-page-de", page)
-        self.assertTrue(page.publish('de'))
-        self.assertTrue(page.publish('en'))
+                           created_by=superuser, apphook="SampleApp")
+        create_page_content("de", "aphooked-page-de", page)
 
         self.reload_urls()
 
@@ -191,32 +206,48 @@ class ApphooksTestCase(CMSTestCase):
         site1, _ = Site.objects.get_or_create(pk=1)
         site2, _ = Site.objects.get_or_create(pk=2)
         superuser = get_user_model().objects.create_superuser('admin', 'admin@admin.com', 'admin')
+        request = self.get_request()
+        request.user = superuser
         home_site_1 = create_page(
-            "home", "nav_playground.html", "en", created_by=superuser, published=True, site=site1
+            "home", "nav_playground.html", "en", created_by=superuser, site=site1
         )
         home_site_2 = create_page(
-            "home", "nav_playground.html", "de", created_by=superuser, published=True, site=site2
+            "home", "nav_playground.html", "de", created_by=superuser, site=site2
         )
 
-        page_1 = create_page(
-            "apphooked-page", "nav_playground.html", "en", created_by=superuser, published=True, parent=home_site_1,
+        page_a_1 = create_page(
+            "apphooked-page", "nav_playground.html", "en", created_by=superuser, parent=home_site_1,
             apphook=NS_APP_NAME, apphook_namespace="instance"
         )
-        page_2_1 = create_page(
-            "apphooked-page", "nav_playground.html", "de", created_by=superuser, published=True, parent=home_site_2,
-            site=site1
+        page_a_2 = create_page(
+            "apphooked-page", "nav_playground.html", "de", created_by=superuser, parent=home_site_1,
         )
-        page_2_2 = create_page(
-            "apphooked-page", "nav_playground.html", "de", created_by=superuser, published=True, parent=home_site_2,
+        page_b_1 = create_page(
+            "apphooked-page", "nav_playground.html", "de", created_by=superuser, parent=home_site_2,
             site=site2
         )
-        form = AdvancedSettingsForm(instance=page_1)
+
+        # AdvancedSettingsForm expects a _site and _request attribute
+        # on __init__. These are normally set by the admin.
+        # In this case, we need to set these in a new class.
+        Meta = type('Meta', (AdvancedSettingsForm.Meta, object), {})
+        formClass = type(AdvancedSettingsForm)(
+            'AdvancedSettingsForm',
+            (AdvancedSettingsForm,),
+            {'Meta': Meta, '_site': site1, '_request': request},
+        )
+        form = formClass(instance=page_a_1)
         self.assertFalse(form._check_unique_namespace_instance("instance"))
 
-        form = AdvancedSettingsForm(instance=page_2_1)
+        form = formClass(instance=page_a_2)
         self.assertTrue(form._check_unique_namespace_instance("instance"))
 
-        form = AdvancedSettingsForm(instance=page_2_2)
+        formClass = type(AdvancedSettingsForm)(
+            'AdvancedSettingsForm',
+            (AdvancedSettingsForm,),
+            {'Meta': Meta, '_site': site2, '_request': request},
+        )
+        form = formClass(instance=page_b_1)
         self.assertFalse(form._check_unique_namespace_instance("instance"))
 
         self.apphook_clear()
@@ -226,10 +257,9 @@ class ApphooksTestCase(CMSTestCase):
         en_title, de_title = self.create_base_structure(APP_NAME, ['en', 'de'])
         with force_language("en"):
             path = reverse('sample-settings')
-        request = self.get_request(path)
-        request.LANGUAGE_CODE = 'en'
-
-        attached_to_page = applications_page_check(request, path=path[1:])  # strip leading slash
+            request = self.get_request(path)
+            request.LANGUAGE_CODE = 'en'
+            attached_to_page = applications_page_check(request)
         self.assertEqual(attached_to_page.pk, en_title.page.pk)
 
         response = self.client.get(path)
@@ -239,9 +269,9 @@ class ApphooksTestCase(CMSTestCase):
         self.assertContains(response, en_title.title)
         with force_language("de"):
             path = reverse('sample-settings')
-        request = self.get_request(path)
-        request.LANGUAGE_CODE = 'de'
-        attached_to_page = applications_page_check(request, path=path[1:])  # strip leading slash and language prefix
+            request = self.get_request(path)
+            request.LANGUAGE_CODE = 'de'
+            attached_to_page = applications_page_check(request)
         self.assertEqual(attached_to_page.pk, de_title.page.pk)
 
         response = self.client.get(path)
@@ -260,10 +290,7 @@ class ApphooksTestCase(CMSTestCase):
         response = self.client.get(path)
         self.assertEqual(response.status_code, 200)
 
-        page = en_title.page.publisher_public
-        page.login_required = True
-        page.save()
-        page.publish('en')
+        en_title.page.update(login_required=True)
 
         response = self.client.get(path)
         self.assertEqual(response.status_code, 302)
@@ -276,7 +303,8 @@ class ApphooksTestCase(CMSTestCase):
         view_names = (
             ('sample-settings', 'sample_view'),
             ('sample-class-view', 'ClassView'),
-            ('sample-class-based-view', 'ClassBasedView'),
+            ('sample-class-based-view', 'view'),
+            # Naming convention changed in Django 4
         )
 
         with force_language("en"):
@@ -292,16 +320,35 @@ class ApphooksTestCase(CMSTestCase):
             excluded_path = reverse('excluded:example')
             not_excluded_path = reverse('not_excluded:example')
 
-        page = en_title.page.publisher_public
-        page.login_required = True
-        page.save()
-        page.publish('en')
+        en_title.page.update(login_required=True)
 
         excluded_response = self.client.get(excluded_path)
         not_excluded_response = self.client.get(not_excluded_path)
         self.assertEqual(excluded_response.status_code, 200)
         self.assertEqual(not_excluded_response.status_code, 302)
         self.apphook_clear()
+
+    @override_settings(CMS_APPHOOKS=[f'{APP_MODULE}.{APP_NAME}'])
+    def test_apphook_without_name_defaults_to_class_name(self):
+        """
+        Test that an apphook without a name defaults to the class name.
+        """
+        @apphook_pool.register
+        class AppWithoutName(CMSApp):
+            def get_urls(self, page=None, language=None, **kwargs):
+                return ["sampleapp.urls"]
+
+        @apphook_pool.register
+        class AppWithName(CMSApp):
+            name = "Custom name"
+
+            def get_urls(self, page=None, language=None, **kwargs):
+                return ["sampleapp.urls"]
+
+        hooks = apphook_pool.get_apphooks()
+        hook_names = dict(hooks)
+        self.assertEqual(hook_names.get('AppWithoutName'), 'AppWithoutName')
+        self.assertEqual(hook_names.get('AppWithName'), 'Custom name')
 
     @override_settings(ROOT_URLCONF='cms.test_utils.project.urls_3')
     def test_get_page_for_apphook_on_preview_or_edit(self):
@@ -311,27 +358,36 @@ class ApphooksTestCase(CMSTestCase):
             superuser = get_user_model().objects.create_superuser('admin', 'admin@admin.com', 'admin')
 
         page = create_page("home", "nav_playground.html", "en",
-                           created_by=superuser, published=True, apphook=APP_NAME)
-        create_title('de', page.get_title(), page)
-        page.publish('en')
-        page.publish('de')
-        page.save()
-        public_page = page.get_public_object()
+                           created_by=superuser, apphook=APP_NAME)
+        create_page_content('de', page.get_title(), page)
+
+        with force_language("en"):
+            path = reverse('sample-settings')
+            request = self.get_request(path)
+            request.LANGUAGE_CODE = 'en'
+            attached_to_page = applications_page_check(request)
+            self.assertEqual(attached_to_page.pk, page.pk)
+
+        with force_language("de"):
+            path = reverse('sample-settings')
+            request = self.get_request(path)
+            request.LANGUAGE_CODE = 'de'
+            attached_to_page = applications_page_check(request)
+            self.assertEqual(attached_to_page.pk, page.pk)
 
         with self.login_user_context(superuser):
             with force_language("en"):
                 path = reverse('sample-settings')
-                request = self.get_request(path + '?%s' % get_cms_setting('CMS_TOOLBAR_URL__EDIT_ON'))
+                request = self.get_request(path)
                 request.LANGUAGE_CODE = 'en'
-                attached_to_page = applications_page_check(request, path=path[1:])  # strip leading slash
-                response = self.client.get(path+"?edit")
-                self.assertContains(response, '?redirect=')
+                attached_to_page = applications_page_check(request)
+                self.assertEqual(attached_to_page.pk, page.pk)
             with force_language("de"):
                 path = reverse('sample-settings')
-                request = self.get_request(path + '?%s' % get_cms_setting('CMS_TOOLBAR_URL__EDIT_ON'))
+                request = self.get_request(path)
                 request.LANGUAGE_CODE = 'de'
-                attached_to_page = applications_page_check(request, path=path[1:])  # strip leading slash
-                self.assertEqual(attached_to_page.pk, public_page.pk)
+                attached_to_page = applications_page_check(request)
+                self.assertEqual(attached_to_page.pk, page.pk)
 
     @override_settings(ROOT_URLCONF='cms.test_utils.project.second_urls_for_apphook_tests')
     def test_get_root_page_for_apphook_with_instance_namespace(self):
@@ -349,7 +405,7 @@ class ApphooksTestCase(CMSTestCase):
         request = self.get_request(path)
         request.LANGUAGE_CODE = 'en'
 
-        attached_to_page = applications_page_check(request, path=path[1:])  # strip leading slash
+        attached_to_page = applications_page_check(request)
         self.assertEqual(attached_to_page.pk, en_title.page.pk)
         self.apphook_clear()
 
@@ -365,7 +421,7 @@ class ApphooksTestCase(CMSTestCase):
 
         request = self.get_request(path)
         request.LANGUAGE_CODE = 'en'
-        attached_to_page = applications_page_check(request, path=path[1:])  # strip leading slash
+        attached_to_page = applications_page_check(request)
         self.assertEqual(attached_to_page.pk, en_title.page_id)
         self.apphook_clear()
 
@@ -377,7 +433,7 @@ class ApphooksTestCase(CMSTestCase):
         request = self.get_request(path)
         request.LANGUAGE_CODE = 'en'
 
-        attached_to_page = applications_page_check(request, path=path[1:])  # strip leading slash
+        attached_to_page = applications_page_check(request)
         self.assertEqual(attached_to_page.pk, en_title.page.pk)
 
         response = self.client.get(path)
@@ -408,20 +464,19 @@ class ApphooksTestCase(CMSTestCase):
         self.apphook_clear()
         titles = self.create_base_structure(NS_APP_NAME, ['en', 'de'], 'instance_1')
         public_de_title = titles[1]
-        de_title = Title.objects.get(page=public_de_title.page.publisher_draft, language="de")
-        de_title.slug = "de"
-        de_title.save()
-        de_title.page.publish('de')
+        de_title = PageContent.objects.get(page=public_de_title.page, language="de")
 
         self.reload_urls()
         self.apphook_clear()
 
-        page2 = create_page("page2", "nav_playground.html",
-                            "en", created_by=self.superuser, published=True, parent=de_title.page.parent,
+        page2 = create_page("page2",
+                            "nav_playground.html",
+                            language="en",
+                            created_by=self.superuser,
+                            parent=de_title.page.parent,
                             apphook=NS_APP_NAME,
                             apphook_namespace="instance_2")
-        create_title("de", "de_title", page2, slug="slug")
-        page2.publish('de')
+        create_page_content("de", "de_title", page2, slug="slug")
         clear_app_resolvers()
         clear_url_caches()
 
@@ -460,7 +515,7 @@ class ApphooksTestCase(CMSTestCase):
         request = self.get_request(path)
         request.LANGUAGE_CODE = 'en'
 
-        attached_to_page = applications_page_check(request, path=path[1:])  # strip leading slash
+        attached_to_page = applications_page_check(request)
         self.assertEqual(attached_to_page.pk, en_title.page.pk)
 
         response = self.client.get(path)
@@ -502,11 +557,11 @@ class ApphooksTestCase(CMSTestCase):
 
     @override_settings(CMS_PERMISSION=False, ROOT_URLCONF='cms.test_utils.project.urls_2')
     def test_apphook_breaking_under_home_with_new_path_caching(self):
-        home = create_page("home", "nav_playground.html", "en", published=True)
-        child = create_page("child", "nav_playground.html", "en", published=True, parent=home)
+        home = self.create_homepage("home", "nav_playground.html", "en")
+        child = create_page("child", "nav_playground.html", "en", parent=home)
         # not-home is what breaks stuff, because it contains the slug of the home page
-        not_home = create_page("not-home", "nav_playground.html", "en", published=True, parent=child)
-        create_page("subchild", "nav_playground.html", "en", published=True, parent=not_home, apphook='SampleApp')
+        not_home = create_page("not-home", "nav_playground.html", "en", parent=child)
+        create_page("subchild", "nav_playground.html", "en", parent=not_home, apphook='SampleApp')
         with force_language("en"):
             self.reload_urls()
             urlpatterns = get_app_patterns()
@@ -541,11 +596,11 @@ class ApphooksTestCase(CMSTestCase):
         # test for #1538
         self.apphook_clear()
         superuser = get_user_model().objects.create_superuser('admin', 'admin@admin.com', 'admin')
-        create_page("home", "nav_playground.html", "en", created_by=superuser, published=True, )
+        create_page("home", "nav_playground.html", "en", created_by=superuser, )
         create_page("apphook1-page", "nav_playground.html", "en",
-                    created_by=superuser, published=True, apphook="SampleApp")
+                    created_by=superuser, apphook="SampleApp")
         create_page("apphook2-page", "nav_playground.html", "en",
-                    created_by=superuser, published=True, apphook="SampleApp2")
+                    created_by=superuser, apphook="SampleApp2")
 
         reverse('sample-root')
         reverse('sample2-root')
@@ -555,9 +610,8 @@ class ApphooksTestCase(CMSTestCase):
     def test_apphooks_return_urls_directly(self):
         self.apphook_clear()
         superuser = get_user_model().objects.create_superuser('admin', 'admin@admin.com', 'admin')
-        page = create_page("apphooked3-page", "nav_playground.html", "en",
-                           created_by=superuser, published=True, apphook="SampleApp3")
-        self.assertTrue(page.publish('en'))
+        create_page("apphooked3-page", "nav_playground.html", "en",
+                    created_by=superuser, apphook="SampleApp3")
         self.reload_urls()
 
         path = reverse('sample3-root')
@@ -609,20 +663,38 @@ class ApphooksTestCase(CMSTestCase):
             path = reverse('namespaced_app_ns:sample-settings')
         request = self.get_request(path)
         toolbar = CMSToolbar(request)
-        self.assertTrue(toolbar.toolbars['cms.test_utils.project.sampleapp.cms_toolbars.CategoryToolbar'].is_current_app)
-        self.assertFalse(toolbar.toolbars['cms.test_utils.project.extensionapp.cms_toolbars.MyTitleExtensionToolbar'].is_current_app)
+        self.assertTrue(
+            toolbar.toolbars['cms.test_utils.project.sampleapp.cms_toolbars.CategoryToolbar'].is_current_app
+        )
+        self.assertFalse(
+            toolbar.toolbars[
+                'cms.test_utils.project.extensionapp.cms_toolbars.MyPageContentExtensionToolbar'
+            ].is_current_app
+        )
 
         # Testing a decorated view
         with force_language("en"):
             path = reverse('namespaced_app_ns:sample-exempt')
         request = self.get_request(path)
         toolbar = CMSToolbar(request)
-        self.assertEqual(toolbar.toolbars['cms.test_utils.project.sampleapp.cms_toolbars.CategoryToolbar'].app_path,
-                         'cms.test_utils.project.sampleapp')
-        self.assertTrue(toolbar.toolbars['cms.test_utils.project.sampleapp.cms_toolbars.CategoryToolbar'].is_current_app)
-        self.assertEqual(toolbar.toolbars['cms.test_utils.project.extensionapp.cms_toolbars.MyTitleExtensionToolbar'].app_path,
-                         'cms.test_utils.project.sampleapp')
-        self.assertFalse(toolbar.toolbars['cms.test_utils.project.extensionapp.cms_toolbars.MyTitleExtensionToolbar'].is_current_app)
+        self.assertEqual(
+            toolbar.toolbars['cms.test_utils.project.sampleapp.cms_toolbars.CategoryToolbar'].app_path,
+            'cms.test_utils.project.sampleapp'
+        )
+        self.assertTrue(
+            toolbar.toolbars['cms.test_utils.project.sampleapp.cms_toolbars.CategoryToolbar'].is_current_app
+        )
+        self.assertEqual(
+            toolbar.toolbars[
+                'cms.test_utils.project.extensionapp.cms_toolbars.MyPageContentExtensionToolbar'
+            ].app_path,
+            'cms.test_utils.project.sampleapp'
+        )
+        self.assertFalse(
+            toolbar.toolbars[
+                'cms.test_utils.project.extensionapp.cms_toolbars.MyPageContentExtensionToolbar'
+            ].is_current_app
+        )
 
     @override_settings(ROOT_URLCONF='cms.test_utils.project.second_urls_for_apphook_tests')
     def test_toolbar_current_app_apphook_with_implicit_current_app(self):
@@ -631,12 +703,24 @@ class ApphooksTestCase(CMSTestCase):
             path = reverse('namespaced_app_ns:current-app')
         request = self.get_request(path)
         toolbar = CMSToolbar(request)
-        self.assertEqual(toolbar.toolbars['cms.test_utils.project.sampleapp.cms_toolbars.CategoryToolbar'].app_path,
-                         'cms.test_utils.project.sampleapp')
-        self.assertTrue(toolbar.toolbars['cms.test_utils.project.sampleapp.cms_toolbars.CategoryToolbar'].is_current_app)
-        self.assertEqual(toolbar.toolbars['cms.test_utils.project.extensionapp.cms_toolbars.MyTitleExtensionToolbar'].app_path,
-                         'cms.test_utils.project.sampleapp')
-        self.assertFalse(toolbar.toolbars['cms.test_utils.project.extensionapp.cms_toolbars.MyTitleExtensionToolbar'].is_current_app)
+        self.assertEqual(
+            toolbar.toolbars['cms.test_utils.project.sampleapp.cms_toolbars.CategoryToolbar'].app_path,
+            'cms.test_utils.project.sampleapp'
+        )
+        self.assertTrue(
+            toolbar.toolbars['cms.test_utils.project.sampleapp.cms_toolbars.CategoryToolbar'].is_current_app
+        )
+        self.assertEqual(
+            toolbar.toolbars[
+                'cms.test_utils.project.extensionapp.cms_toolbars.MyPageContentExtensionToolbar'
+            ].app_path,
+            'cms.test_utils.project.sampleapp'
+        )
+        self.assertFalse(
+            toolbar.toolbars[
+                'cms.test_utils.project.extensionapp.cms_toolbars.MyPageContentExtensionToolbar'
+            ].is_current_app
+        )
 
     @override_settings(ROOT_URLCONF='cms.test_utils.project.placeholderapp_urls')
     def test_toolbar_no_namespace(self):
@@ -645,9 +729,17 @@ class ApphooksTestCase(CMSTestCase):
         path = reverse('detail', kwargs={'id': 20})
         request = self.get_request(path)
         toolbar = CMSToolbar(request)
-        self.assertFalse(toolbar.toolbars['cms.test_utils.project.sampleapp.cms_toolbars.CategoryToolbar'].is_current_app)
-        self.assertFalse(toolbar.toolbars['cms.test_utils.project.extensionapp.cms_toolbars.MyTitleExtensionToolbar'].is_current_app)
-        self.assertTrue(toolbar.toolbars['cms.test_utils.project.placeholderapp.cms_toolbars.Example1Toolbar'].is_current_app)
+        self.assertFalse(
+            toolbar.toolbars['cms.test_utils.project.sampleapp.cms_toolbars.CategoryToolbar'].is_current_app
+        )
+        self.assertFalse(
+            toolbar.toolbars[
+                'cms.test_utils.project.extensionapp.cms_toolbars.MyPageContentExtensionToolbar'
+            ].is_current_app
+        )
+        self.assertTrue(
+            toolbar.toolbars['cms.test_utils.project.placeholderapp.cms_toolbars.Example1Toolbar'].is_current_app
+        )
 
     @override_settings(ROOT_URLCONF='cms.test_utils.project.placeholderapp_urls')
     def test_toolbar_multiple_supported_apps(self):
@@ -658,16 +750,34 @@ class ApphooksTestCase(CMSTestCase):
         toolbar = CMSToolbar(request)
         self.assertEqual(toolbar.toolbars['cms.test_utils.project.sampleapp.cms_toolbars.CategoryToolbar'].app_path,
                          'cms.test_utils.project.placeholderapp')
-        self.assertFalse(toolbar.toolbars['cms.test_utils.project.sampleapp.cms_toolbars.CategoryToolbar'].is_current_app)
-        self.assertEqual(toolbar.toolbars['cms.test_utils.project.extensionapp.cms_toolbars.MyTitleExtensionToolbar'].app_path,
-                         'cms.test_utils.project.placeholderapp')
-        self.assertFalse(toolbar.toolbars['cms.test_utils.project.extensionapp.cms_toolbars.MyTitleExtensionToolbar'].is_current_app)
-        self.assertEqual(toolbar.toolbars['cms.test_utils.project.extensionapp.cms_toolbars.MyPageExtensionToolbar'].app_path,
-                         'cms.test_utils.project.placeholderapp')
-        self.assertTrue(toolbar.toolbars['cms.test_utils.project.extensionapp.cms_toolbars.MyPageExtensionToolbar'].is_current_app)
-        self.assertEqual(toolbar.toolbars['cms.test_utils.project.placeholderapp.cms_toolbars.Example1Toolbar'].app_path,
-                         'cms.test_utils.project.placeholderapp')
-        self.assertTrue(toolbar.toolbars['cms.test_utils.project.placeholderapp.cms_toolbars.Example1Toolbar'].is_current_app)
+        self.assertFalse(
+            toolbar.toolbars['cms.test_utils.project.sampleapp.cms_toolbars.CategoryToolbar'].is_current_app
+        )
+        self.assertEqual(
+            toolbar.toolbars[
+                'cms.test_utils.project.extensionapp.cms_toolbars.MyPageContentExtensionToolbar']
+            .app_path,
+            'cms.test_utils.project.placeholderapp'
+        )
+        self.assertFalse(
+            toolbar.toolbars[
+                'cms.test_utils.project.extensionapp.cms_toolbars.MyPageContentExtensionToolbar'
+            ].is_current_app
+        )
+        self.assertEqual(
+            toolbar.toolbars['cms.test_utils.project.extensionapp.cms_toolbars.MyPageExtensionToolbar'].app_path,
+            'cms.test_utils.project.placeholderapp'
+        )
+        self.assertTrue(
+            toolbar.toolbars['cms.test_utils.project.extensionapp.cms_toolbars.MyPageExtensionToolbar'].is_current_app
+        )
+        self.assertEqual(
+            toolbar.toolbars['cms.test_utils.project.placeholderapp.cms_toolbars.Example1Toolbar'].app_path,
+            'cms.test_utils.project.placeholderapp'
+        )
+        self.assertTrue(
+            toolbar.toolbars['cms.test_utils.project.placeholderapp.cms_toolbars.Example1Toolbar'].is_current_app
+        )
 
     @override_settings(
         CMS_APPHOOKS=['cms.test_utils.project.placeholderapp.cms_apps.Example1App'],
@@ -688,7 +798,7 @@ class ApphooksTestCase(CMSTestCase):
 
             self.user = self._create_user('admin_staff', True, True)
             with self.login_user_context(self.user):
-                response = self.client.get(path+"?edit")
+                response = self.client.get(path + "?edit")
 
             request = response.context['request']
             toolbar = request.toolbar
@@ -699,7 +809,7 @@ class ApphooksTestCase(CMSTestCase):
 
             self.user = self._create_user('staff', True, False)
             with self.login_user_context(self.user):
-                response = self.client.get(path+"?edit")
+                response = self.client.get(path + "?edit")
 
             request = response.context['request']
             request.user = get_user_model().objects.get(pk=self.user.pk)
@@ -711,7 +821,7 @@ class ApphooksTestCase(CMSTestCase):
 
             self.user.user_permissions.add(Permission.objects.get(codename='change_example1'))
             with self.login_user_context(self.user):
-                response = self.client.get(path+"?edit")
+                response = self.client.get(path + "?edit")
 
             request = response.context['request']
             request.user = get_user_model().objects.get(pk=self.user.pk)
@@ -735,32 +845,17 @@ class ApphooksTestCase(CMSTestCase):
 
             self.user = None
 
-    def test_page_edit_redirect_models(self):
-        apphooks = (
-            'cms.test_utils.project.placeholderapp.cms_apps.Example1App',
-        )
-        ex1 = Example1.objects.create(char_1="char_1", char_2="char_2",
-                                      char_3="char_3", char_4="char_4")
-        with self.settings(CMS_APPHOOKS=apphooks, ROOT_URLCONF='cms.test_utils.project.placeholderapp_urls'):
-            self.create_base_structure('Example1App', 'en')
-            url = admin_reverse('cms_page_resolve')
-            self.user = self._create_user('admin_staff', True, True)
-            with self.login_user_context(self.user):
-                # parameters - non page object
-                response = self.client.post(url, {'pk': ex1.pk, 'model': 'placeholderapp.example1'})
-                self.assertEqual(response.content.decode('utf-8'), ex1.get_absolute_url())
-
     def test_nested_apphooks_urls(self):
         # make sure that urlparams actually reach the apphook views
         with self.settings(ROOT_URLCONF='cms.test_utils.project.urls'):
             self.apphook_clear()
 
             superuser = get_user_model().objects.create_superuser('admin', 'admin@admin.com', 'admin')
-            create_page("home", "nav_playground.html", "en", created_by=superuser, published=True, )
+            create_page("home", "nav_playground.html", "en", created_by=superuser, )
             parent_page = create_page("parent-apphook-page", "nav_playground.html", "en",
-                                      created_by=superuser, published=True, apphook="ParentApp")
+                                      created_by=superuser, apphook="ParentApp")
             create_page("child-apphook-page", "nav_playground.html", "en", parent=parent_page,
-                        created_by=superuser, published=True, apphook="ChildApp")
+                        created_by=superuser, apphook="ChildApp")
 
             parent_app_path = reverse('parentapp_view', kwargs={'path': 'parent/path/'})
             child_app_path = reverse('childapp_view', kwargs={'path': 'child-path/'})
@@ -800,11 +895,10 @@ class ApphooksTestCase(CMSTestCase):
         self.apphook_clear()
 
         page2 = create_page('page2', 'nav_playground.html',
-                            'en', created_by=self.superuser, published=True,
+                            'en', created_by=self.superuser,
                             parent=titles[0].page.parent,
                             apphook='VariableUrlsApp', reverse_id='page2')
-        create_title('de', 'de_title', page2, slug='slug')
-        page2.publish('de')
+        create_page_content('de', 'de_title', page2, slug='slug')
 
         self.reload_urls()
 
@@ -829,7 +923,8 @@ class ApphooksTestCase(CMSTestCase):
         cache.clear()
 
         request = self.get_request('/')
-        nodes = menu_pool.get_nodes(request)
+        renderer = menu_pool.get_renderer(request)
+        nodes = renderer.get_nodes()
         nodes_urls = [node.url for node in nodes]
         self.assertTrue(reverse('sample-account') in nodes_urls)
         self.assertFalse('/en/child_page/page2/' in nodes_urls)
@@ -841,20 +936,74 @@ class ApphooksTestCase(CMSTestCase):
         self.reload_urls()
 
         page2 = create_page('page2', 'nav_playground.html',
-                            'en', created_by=self.superuser, published=True,
-                            parent=titles[0].page.get_draft_object().parent,
+                            'en', created_by=self.superuser,
+                            parent=titles[0].page.parent,
                             in_navigation=True,
                             apphook='VariableUrlsApp', reverse_id='page2')
-        create_title('de', 'de_title', page2, slug='slug')
-        page2.publish('de')
+        create_page_content('de', 'de_title', page2, slug='slug')
         request = self.get_request('/page2/')
-        nodes = menu_pool.get_nodes(request)
+        renderer = menu_pool.get_renderer(request)
+        nodes = renderer.get_nodes()
         nodes_urls = [node.url for node in nodes]
         self.assertTrue(reverse('sample-account') in nodes_urls)
         self.assertTrue(reverse('sample2-root') in nodes_urls)
         self.assertTrue('/static/fresh/' in nodes_urls)
 
         self.apphook_clear()
+
+    @override_settings(
+        CMS_APPHOOKS=['cms.test_utils.project.sampleapp.cms_apps.AppWithNoMenu'],
+    )
+    def test_menu_node_is_selected_on_app_root(self):
+        """
+        If a user requests a page with an apphook,
+        the menu should mark the node for that page as selected.
+        """
+        defaults = {
+            'language': 'en',
+            'in_navigation': True,
+            'template': 'nav_playground.html',
+        }
+        homepage = create_page('EN-P1', **defaults)
+        homepage.set_as_homepage()
+        app_root = create_page('EN-P2', apphook='AppWithNoMenu', apphook_namespace='app_with_no_menu', **defaults)
+
+        # Public version
+        request = self.get_request('/en/en-p2/')
+        request.current_page = get_page(request)
+        menu_nodes = menu_pool.get_renderer(request).get_nodes()
+        self.assertEqual(len(menu_nodes), 2)
+        self.assertEqual(menu_nodes[0].id, homepage.pk)
+        self.assertEqual(menu_nodes[0].selected, False)
+        self.assertEqual(menu_nodes[1].id, app_root.pk)
+        self.assertEqual(menu_nodes[1].selected, True)
+
+    @override_settings(
+        CMS_APPHOOKS=['cms.test_utils.project.sampleapp.cms_apps.AppWithNoMenu'],
+    )
+    def test_menu_node_is_selected_on_app_sub_path(self):
+        """
+        If a user requests a path belonging to an apphook,
+        the menu should mark the node for the apphook page as selected.
+        """
+        # Refs - https://github.com/divio/django-cms/issues/6336
+        defaults = {
+            'language': 'en',
+            'in_navigation': True,
+            'template': 'nav_playground.html',
+        }
+        homepage = create_page('EN-P1', **defaults)
+        homepage.set_as_homepage()
+        app_root = create_page('EN-P2', apphook='AppWithNoMenu', apphook_namespace='app_with_no_menu', **defaults)
+
+        request = self.get_request('/en/en-p2/settings/')
+        request.current_page = get_page(request)
+        menu_nodes = menu_pool.get_renderer(request).get_nodes()
+        self.assertEqual(len(menu_nodes), 2)
+        self.assertEqual(menu_nodes[0].id, homepage.pk)
+        self.assertEqual(menu_nodes[0].selected, False)
+        self.assertEqual(menu_nodes[1].id, app_root.pk)
+        self.assertEqual(menu_nodes[1].selected, True)
 
 
 class ApphooksPageLanguageUrlTestCase(CMSTestCase):
@@ -894,26 +1043,19 @@ class ApphooksPageLanguageUrlTestCase(CMSTestCase):
 
         self.apphook_clear()
         superuser = get_user_model().objects.create_superuser('admin', 'admin@admin.com', 'admin')
-        page = create_page("home", "nav_playground.html", "en",
-                           created_by=superuser)
-        create_title('de', page.get_title(), page)
-        page.publish('en')
-        page.publish('de')
+        page = self.create_homepage("home", "nav_playground.html", "en", created_by=superuser)
+        create_page_content('de', page.get_title(), page)
 
         child_page = create_page("child_page", "nav_playground.html", "en",
                                  created_by=superuser, parent=page)
-        create_title('de', child_page.get_title(), child_page)
-        child_page.publish('en')
-        child_page.publish('de')
+        create_page_content('de', child_page.get_title(), child_page)
+        child_page.refresh_from_db()
 
         child_child_page = create_page("child_child_page", "nav_playground.html",
                                        "en", created_by=superuser, parent=child_page, apphook='SampleApp')
-        create_title("de", '%s_de' % child_child_page.get_title(), child_child_page)
-        child_child_page.publish('en')
-        child_child_page.publish('de')
+        create_page_content("de", f'{child_child_page.get_title()}_de', child_child_page)
+        child_child_page.refresh_from_db()
 
-        # publisher_public is set to draft on publish, issue with one to one reverse
-        child_child_page = self.reload(child_child_page)
         with force_language("en"):
             path = reverse('extra_first')
 
@@ -936,6 +1078,6 @@ class ApphooksPageLanguageUrlTestCase(CMSTestCase):
 
         output = tag.get_context(fake_context, 'fr')
         url = output['content']
-        self.assertEqual(url, '/fr/child_page/child_child_page/extra_1/')
+        self.assertEqual(url, '/en/child_page/child_child_page/extra_1/')
 
         self.apphook_clear()

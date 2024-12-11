@@ -3,14 +3,31 @@ from abc import ABCMeta
 from collections import defaultdict
 
 from django.template.loader import render_to_string
-import six
 from django.utils.encoding import force_str
 from django.utils.functional import Promise
 
-from cms.constants import RIGHT, LEFT, REFRESH_PAGE, URL_CHANGE
+from cms.constants import LEFT, REFRESH_PAGE, RIGHT, URL_CHANGE
+from cms.utils.compat import DJANGO_4_2
 
 
-class ItemSearchResult(object):
+class ItemSearchResult:
+    """
+    Returned by the find APIs in :class:`ToolbarAPIMixin`.
+
+    An ``ItemSearchResult`` will have two useful attributes:
+
+    .. attribute:: item
+
+        The item found.
+
+    .. attribute:: index
+
+        The index of the item (its position amongst the other items).
+
+    The ``ItemSearchResult`` itself can be cast to an integer, and supports addition and
+    subtraction of numbers. See the :option:`position` parameter for more details, and
+    :ref:`toolbar_control_item_position` for examples.
+    """
     def __init__(self, item, index):
         self.item = item
         self.index = index
@@ -25,14 +42,24 @@ class ItemSearchResult(object):
         return self.index
 
 
-def may_be_lazy(thing):
-    if isinstance(thing, Promise):
-        return thing._proxy____args[0]
-    else:
-        return thing
+if DJANGO_4_2:
+    def may_be_lazy(thing):
+        if isinstance(thing, Promise):
+            return thing._proxy____args[0]
+        else:
+            return thing
+else:
+    def may_be_lazy(thing):
+        if isinstance(thing, Promise):
+            return thing._args[0]
+        else:
+            return thing
 
 
-class ToolbarAPIMixin(six.with_metaclass(ABCMeta)):
+class ToolbarAPIMixin(metaclass=ABCMeta):
+    """
+    Provides APIs used by :class:`~cms.toolbar.toolbar.CMSToolbar` and :class:`Menu`.
+    """
     REFRESH_PAGE = REFRESH_PAGE
     URL_CHANGE = URL_CHANGE
     LEFT = LEFT
@@ -65,9 +92,14 @@ class ToolbarAPIMixin(six.with_metaclass(ABCMeta)):
             raise KeyError("Item %r not found" % item)
 
     def get_item_count(self):
+        """Returns the number of items in the menu."""
         return len(self.items)
 
     def add_item(self, item, position=None):
+        """Adds an item (which must be a subclass of :class:`~cms.toolbar.items.BaseItem`), and
+        returns it. This is a low-level API, and you should always use one of the built-in
+        object-specific methods to add items in preference if possible, using this method **only**
+        for custom item classes."""
         if not isinstance(item, BaseItem):
             raise ValueError("Items must be subclasses of cms.toolbar.items.BaseItem, %r isn't" % item)
         if isinstance(position, ItemSearchResult):
@@ -75,12 +107,16 @@ class ToolbarAPIMixin(six.with_metaclass(ABCMeta)):
         elif isinstance(position, BaseItem):
             position = self._item_position(position)
         elif not (position is None or isinstance(position, (int,))):
-            raise ValueError("Position must be None, an integer, an item or an ItemSearchResult, got %r instead" % position)
+            raise ValueError(
+                "Position must be None, an integer, an item or an ItemSearchResult, got %r instead" % position
+            )
         self._add_item(item, position)
         self._memoize(item)
         return item
 
     def find_items(self, item_type, **attributes):
+        """Returns a list of :class:`~cms.toolbar.items.ItemSearchResult` objects matching all items of ``item_type``
+        (e.g. ``LinkItem``)."""
         results = []
         attr_items = attributes.items()
         notfound = object()
@@ -90,6 +126,9 @@ class ToolbarAPIMixin(six.with_metaclass(ABCMeta)):
         return results
 
     def find_first(self, item_type, **attributes):
+        """Returns the first :class:`~cms.toolbar.items.ItemSearchResult` that matches the search, or ``None``.
+        The search strategy is the same as in :meth:`find_items`. The return value of this method is
+        safe to use as the :option:`position` argument of the various APIs to add items."""
         try:
             return self.find_items(item_type, **attributes)[0]
         except IndexError:
@@ -113,8 +152,7 @@ class ToolbarAPIMixin(six.with_metaclass(ABCMeta)):
             if result.item.name > new_menu_name:
                 return result.index
 
-            if result.index > last_position:
-                last_position = result.index
+            last_position = max(result.index, last_position)
         else:
             return last_position + 1
 
@@ -124,56 +162,81 @@ class ToolbarAPIMixin(six.with_metaclass(ABCMeta)):
 
     def add_sideframe_item(self, name, url, active=False, disabled=False,
                            extra_classes=None, on_close=None, side=LEFT, position=None):
-        item = SideframeItem(name, url,
-                             active=active,
-                             disabled=disabled,
-                             extra_classes=extra_classes,
-                             on_close=on_close,
-                             side=side,
+        """Adds a :class:`~cms.toolbar.items.SideframeItem` that opens ``url`` in the sideframe and returns it."""
+
+        item = SideframeItem(
+            name, url,
+            active=active,
+            disabled=disabled,
+            extra_classes=extra_classes,
+            on_close=on_close,
+            side=side,
         )
         self.add_item(item, position=position)
         return item
 
     def add_modal_item(self, name, url, active=False, disabled=False,
                        extra_classes=None, on_close=REFRESH_PAGE, side=LEFT, position=None):
-        item = ModalItem(name, url,
-                         active=active,
-                         disabled=disabled,
-                         extra_classes=extra_classes,
-                         on_close=on_close,
-                         side=side,
+        """Similar to :meth:`add_sideframe_item`, but adds a :class:`~cms.toolbar.items.ModalItem` that opens the
+        ``url`` in a modal dialog instead of the sideframe, and returns it."""
+
+        item = ModalItem(
+            name, url,
+            active=active,
+            disabled=disabled,
+            extra_classes=extra_classes,
+            on_close=on_close,
+            side=side,
         )
         self.add_item(item, position=position)
         return item
 
     def add_link_item(self, name, url, active=False, disabled=False,
                       extra_classes=None, side=LEFT, position=None):
-        item = LinkItem(name, url,
-                        active=active,
-                        disabled=disabled,
-                        extra_classes=extra_classes,
-                        side=side
+        """Adds a :class:`~cms.toolbar.items.LinkItem` that opens ``url``, and returns it."""
+
+        item = LinkItem(
+            name, url,
+            active=active,
+            disabled=disabled,
+            extra_classes=extra_classes,
+            side=side
         )
         self.add_item(item, position=position)
         return item
 
     def add_ajax_item(self, name, action, active=False, disabled=False,
                       extra_classes=None, data=None, question=None,
-                      side=LEFT, position=None, on_success=None):
-        item = AjaxItem(name, action, self.csrf_token,
-                        active=active,
-                        disabled=disabled,
-                        extra_classes=extra_classes,
-                        data=data,
-                        question=question,
-                        side=side,
-                        on_success=on_success,
+                      side=LEFT, position=None, on_success=None, method='POST'):
+        """Adds :class:`~cms.toolbar.items.AjaxItem` that sends a POST request to ``action`` with ``data``, and returns
+        it. ``data`` should be ``None`` or a dictionary. The CSRF token will automatically be added
+        to the item.
+
+        If a string is provided for ``question``, it will be presented to the user to allow
+        confirmation before the request is sent."""
+
+        item = AjaxItem(
+            name, action, self.csrf_token,
+            active=active,
+            disabled=disabled,
+            extra_classes=extra_classes,
+            data=data,
+            question=question,
+            side=side,
+            on_success=on_success,
+            method=method,
         )
         self.add_item(item, position=position)
         return item
 
 
-class BaseItem(six.with_metaclass(ABCMeta)):
+class BaseItem(metaclass=ABCMeta):
+    """
+    All toolbar items inherit from ``BaseItem``. If you need to create a custom toolbar item,
+    subclass ``BaseItem``.
+    """
+    toolbar = None
+    #: Must be set by subclasses and point to a Django template
     template = None
 
     def __init__(self, side=LEFT):
@@ -184,15 +247,26 @@ class BaseItem(six.with_metaclass(ABCMeta)):
         return self.side is RIGHT
 
     def render(self):
+        """
+        Renders the item and returns it as a string. By default, calls
+        :meth:`get_context` and renders :attr:`template` with the context
+        returned.
+        """
+        if self.toolbar:
+            template = self.toolbar.templates.get_cached_template(self.template)
+            return template.render(self.get_context())
+        # Backwards compatibility
         return render_to_string(self.template, self.get_context())
 
     def get_context(self):
+        """Returns the context (as dictionary) for this item."""
         return {}
 
 
 class TemplateItem(BaseItem):
+
     def __init__(self, template, extra_context=None, side=LEFT):
-        super(TemplateItem, self).__init__(side)
+        super().__init__(side)
         self.template = template
         self.extra_context = extra_context
 
@@ -203,6 +277,11 @@ class TemplateItem(BaseItem):
 
 
 class SubMenu(ToolbarAPIMixin, BaseItem):
+    """
+    A child of a :class:`Menu`. Use a :meth:`Menu.get_or_create_menu
+    <cms.toolbar.items.Menu.get_or_create_menu>` method to create a ``SubMenu``
+    instance. Can be added to ``Menu``.
+    """
     template = "cms/toolbar/items/menu.html"
     sub_level = True
     active = False
@@ -218,6 +297,8 @@ class SubMenu(ToolbarAPIMixin, BaseItem):
         return '<Menu:%s>' % force_str(self.name)
 
     def add_break(self, identifier=None, position=None):
+        """Adds a visual break in the menu, at :option:`position`, and returns it. ``identifier`` may
+        be used to make this item searchable."""
         item = Break(identifier)
         self.add_item(item, position=position)
         return item
@@ -225,6 +306,7 @@ class SubMenu(ToolbarAPIMixin, BaseItem):
     def get_items(self):
         items = self.items
         for item in items:
+            item.toolbar = self.toolbar
             if hasattr(item, 'disabled'):
                 item.disabled = self.disabled or item.disabled
         return items
@@ -240,9 +322,15 @@ class SubMenu(ToolbarAPIMixin, BaseItem):
 
 
 class Menu(SubMenu):
+    """
+    Provides a menu in the toolbar. Use a :meth:`CMSToolbar.get_or_create_menu
+    <cms.toolbar.toolbar.CMSToolbar.get_or_create_menu>` method to create a ``Menu``
+    instance. Can be added to :class:`~cms.toolbar.toolbar.CMSToolbar`.
+    """
     sub_level = False
 
     def get_or_create_menu(self, key, verbose_name, disabled=False, side=LEFT, position=None):
+        """Adds a new sub-menu, at :option:`position`, and returns a :class:`SubMenu`."""
         if key in self.menus:
             return self.menus[key]
         menu = SubMenu(verbose_name, self.csrf_token, disabled=disabled, side=side)
@@ -252,10 +340,15 @@ class Menu(SubMenu):
 
 
 class LinkItem(BaseItem):
+    """
+    Sends a GET request. Use an :class:`~ToolbarAPIMixin.add_link_item` method to create a
+    ``LinkItem`` instance. Can be added to :class:`~cms.toolbar.toolbar.CMSToolbar`,
+    :class:`~cms.toolbar.items.Menu`, :class:`~cms.toolbar.items.SubMenu`.
+    """
     template = "cms/toolbar/items/item_link.html"
 
     def __init__(self, name, url, active=False, disabled=False, extra_classes=None, side=LEFT):
-        super(LinkItem, self).__init__(side)
+        super().__init__(side)
         self.name = name
         self.url = url
         self.active = active
@@ -276,11 +369,16 @@ class LinkItem(BaseItem):
 
 
 class FrameItem(BaseItem):
+    """
+    Base class for :class:`~cms.toolbar.items.ModalItem` and :class:`~cms.toolbar.items.SideframeItem`.
+    Frame items have three dots besides their name indicating that some frame or dialog will open
+    when selected.
+    """
     # Be sure to define the correct template
 
     def __init__(self, name, url, active=False, disabled=False,
                  extra_classes=None, on_close=None, side=LEFT):
-        super(FrameItem, self).__init__(side)
+        super().__init__(side)
         self.name = "%s..." % force_str(name)
         self.url = url
         self.active = active
@@ -304,6 +402,12 @@ class FrameItem(BaseItem):
 
 
 class SideframeItem(FrameItem):
+    """
+    Sends a GET request; loads response in a sideframe. Use an
+    :class:`~ToolbarAPIMixin.add_sideframe_item` method to create a ``SideframeItem`` instance. Can
+    be added to :class:`~cms.toolbar.toolbar.CMSToolbar`, :class:`~cms.toolbar.items.Menu`,
+    :class:`~cms.toolbar.items.SubMenu`.
+    """
     template = "cms/toolbar/items/item_sideframe.html"
 
     def __repr__(self):
@@ -311,6 +415,12 @@ class SideframeItem(FrameItem):
 
 
 class ModalItem(FrameItem):
+    """
+    Sends a GET request; loads response in a modal window. Use an
+    :class:`~ToolbarAPIMixin.add_modal_item` method to create a ``ModalItem`` instance. Can be
+    added to :class:`~cms.toolbar.toolbar.CMSToolbar`, :class:`~cms.toolbar.items.Menu`,
+    :class:`~cms.toolbar.items.SubMenu`.
+    """
     template = "cms/toolbar/items/item_modal.html"
 
     def __repr__(self):
@@ -318,12 +428,18 @@ class ModalItem(FrameItem):
 
 
 class AjaxItem(BaseItem):
+    """
+    Sends a POST request. Use an :class:`~ToolbarAPIMixin.add_ajax_item` method to create a
+    ``AjaxItem`` instance. Can be added to :class:`~cms.toolbar.toolbar.CMSToolbar`,
+    :class:`~cms.toolbar.items.Menu`, :class:`~cms.toolbar.items.SubMenu`.
+
+    """
     template = "cms/toolbar/items/item_ajax.html"
 
     def __init__(self, name, action, csrf_token, data=None, active=False,
                  disabled=False, extra_classes=None,
-                 question=None, side=LEFT, on_success=None):
-        super(AjaxItem, self).__init__(side)
+                 question=None, side=LEFT, on_success=None, method='POST'):
+        super().__init__(side)
         self.name = name
         self.action = action
         self.active = active
@@ -333,38 +449,52 @@ class AjaxItem(BaseItem):
         self.extra_classes = extra_classes or []
         self.question = question
         self.on_success = on_success
+        self.method = method
 
     def __repr__(self):
         return '<AjaxItem:%s>' % force_str(self.name)
 
     def get_context(self):
-        data = {}
-        data.update(self.data)
-        data['csrfmiddlewaretoken'] = self.csrf_token
-        data = json.dumps(data)
+        data = self.data.copy()
+
+        if self.method not in ('GET', 'HEAD', 'OPTIONS', 'TRACE'):
+            data['csrfmiddlewaretoken'] = self.csrf_token
+
         return {
             'action': self.action,
             'name': self.name,
             'active': self.active,
             'disabled': self.disabled,
             'extra_classes': self.extra_classes,
-            'data': data,
+            'data': json.dumps(data),
             'question': self.question,
-            'on_success': self.on_success
+            'on_success': self.on_success,
+            'method': self.method,
         }
 
 
 class Break(BaseItem):
+    """
+    A visual break in a menu. Use an :class:`~cms.toolbar.items.SubMenu.add_break` method to create
+    a ``Break`` instance. Can be added to :class:`~cms.toolbar.items.Menu`,
+    :class:`~cms.toolbar.items.SubMenu`.
+
+    """
     template = "cms/toolbar/items/break.html"
 
     def __init__(self, identifier=None):
         self.identifier = identifier
 
 
-class BaseButton(six.with_metaclass(ABCMeta)):
+class BaseButton(metaclass=ABCMeta):
+    toolbar = None
     template = None
 
     def render(self):
+        if self.toolbar:
+            template = self.toolbar.templates.get_cached_template(self.template)
+            return template.render(self.get_context())
+        # Backwards compatibility
         return render_to_string(self.template, self.get_context())
 
     def get_context(self):
@@ -372,6 +502,12 @@ class BaseButton(six.with_metaclass(ABCMeta)):
 
 
 class Button(BaseButton):
+    """
+    Sends a GET request. Use a :meth:`CMSToolbar.add_button
+    <cms.toolbar.toolbar.CMSToolbar.add_button>` or :meth:`ButtonList.add_button` method to create
+    a ``Button`` instance. Can be added to :class:`~cms.toolbar.toolbar.CMSToolbar`,
+    :class:`~cms.toolbar.items.ButtonList`.
+    """
     template = "cms/toolbar/items/button.html"
 
     def __init__(self, name, url, active=False, disabled=False,
@@ -396,9 +532,15 @@ class Button(BaseButton):
 
 
 class ModalButton(Button):
+    """
+    Sends a GET request. Use a :meth:`CMSToolbar.add_modal_button
+    <cms.toolbar.toolbar.CMSToolbar.add_modal_button>` or :meth:`ButtonList.add_modal_button`
+    method to create a ``ModalButton`` instance. Can be added to
+    :class:`~cms.toolbar.toolbar.CMSToolbar`, :class:`~cms.toolbar.items.ButtonList`.
+    """
     template = "cms/toolbar/items/button_modal.html"
 
-    def __init__(self, name, url, active=False, disabled=False,  extra_classes=None, on_close=None):
+    def __init__(self, name, url, active=False, disabled=False, extra_classes=None, on_close=None):
         self.name = name
         self.url = url
         self.active = active
@@ -421,6 +563,12 @@ class ModalButton(Button):
 
 
 class SideframeButton(ModalButton):
+    """
+    Sends a GET request. Use a :meth:`CMSToolbar.add_sideframe_button
+    <cms.toolbar.toolbar.CMSToolbar.add_sideframe_button>` or
+    :meth:`ButtonList.add_sideframe_button` method to create a ``SideframeButton`` instance. Can be
+    added to :class:`~cms.toolbar.toolbar.CMSToolbar`, :class:`~cms.toolbar.items.ButtonList`.
+    """
     template = "cms/toolbar/items/button_sideframe.html"
 
     def __repr__(self):
@@ -428,10 +576,15 @@ class SideframeButton(ModalButton):
 
 
 class ButtonList(BaseItem):
+    """
+    A visually-connected list of one or more buttons. Use an
+    :meth:`~cms.toolbar.toolbar.CMSToolbar.add_button_list` method to create a
+    ``ButtonList`` instance. Can be added to :class:`~cms.toolbar.toolbar.CMSToolbar`.
+    """
     template = "cms/toolbar/items/button_list.html"
 
     def __init__(self, identifier=None, extra_classes=None, side=LEFT):
-        super(ButtonList, self).__init__(side)
+        super().__init__(side)
         self.extra_classes = extra_classes or []
         self.buttons = []
         self.identifier = identifier
@@ -446,39 +599,58 @@ class ButtonList(BaseItem):
 
     def add_button(self, name, url, active=False, disabled=False,
                    extra_classes=None):
-        item = Button(name, url,
-                      active=active,
-                      disabled=disabled,
-                      extra_classes=extra_classes
+        """Adds a :class:`Button` to the list of buttons and returns it."""
+
+        item = Button(
+            name, url,
+            active=active,
+            disabled=disabled,
+            extra_classes=extra_classes
         )
         self.buttons.append(item)
         return item
 
     def add_modal_button(self, name, url, active=False, disabled=False, extra_classes=None, on_close=REFRESH_PAGE):
-        item = ModalButton(name, url,
-                      active=active,
-                      disabled=disabled,
-                      extra_classes=extra_classes,
-                      on_close=on_close,
+        """Adds a :class:`~cms.toolbar.items.ModalButton` to the button list and returns it."""
+
+        item = ModalButton(
+            name, url,
+            active=active,
+            disabled=disabled,
+            extra_classes=extra_classes,
+            on_close=on_close,
         )
         self.buttons.append(item)
         return item
 
     def add_sideframe_button(self, name, url, active=False, disabled=False, extra_classes=None, on_close=None):
-        item = SideframeButton(name, url,
-                      active=active,
-                      disabled=disabled,
-                      extra_classes=extra_classes,
-                      on_close=on_close,
+        """Adds a :class:`~cms.toolbar.items.SideframeButton` to the button list and returns it."""
+
+        item = SideframeButton(
+            name, url,
+            active=active,
+            disabled=disabled,
+            extra_classes=extra_classes,
+            on_close=on_close,
         )
         self.buttons.append(item)
         return item
 
+    def get_buttons(self):
+        """Yields all buttons in the button list"""
+        for button in self.buttons:
+            button.toolbar = self.toolbar
+            yield button
+
     def get_context(self):
-        return {
-            'buttons': self.buttons,
+        context = {
+            'buttons': list(self.get_buttons()),
             'extra_classes': self.extra_classes
         }
+
+        if self.toolbar:
+            context['cms_structure_url'] = self.toolbar.get_object_structure_url()
+        return context
 
 
 class Dropdown(ButtonList):
@@ -486,7 +658,7 @@ class Dropdown(ButtonList):
     template = "cms/toolbar/items/dropdown.html"
 
     def __init__(self, *args, **kwargs):
-        super(Dropdown, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.primary_button = None
 
     def __repr__(self):
@@ -497,6 +669,7 @@ class Dropdown(ButtonList):
 
     def get_buttons(self):
         for button in self.buttons:
+            button.toolbar = self.toolbar
             button.is_in_dropdown = True
             yield button
 

@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+from django.contrib.messages.storage.cookie import CookieStorage
 from django.forms.models import model_to_dict
 from django.test.utils import override_settings
 
@@ -322,6 +322,7 @@ class PermissionsOnPageTest(PermissionsOnTestCase):
         staff_user = self.get_staff_user_with_no_permissions()
         staff_user.groups.add(group)
         endpoint = self.get_admin_url(PageUserGroup, 'change', group.pk)
+        redirect_to = admin_reverse('index')
 
         data = model_to_dict(group)
         data['_continue'] = '1'
@@ -336,7 +337,10 @@ class PermissionsOnPageTest(PermissionsOnTestCase):
 
         with self.login_user_context(staff_user):
             response = self.client.post(endpoint, data)
-            self.assertEqual(response.status_code, 404)
+            self.assertRedirects(response, redirect_to)
+            msgs = CookieStorage(response)._decode(response.cookies['messages'].value)
+            self.assertTrue(msgs[0], PageUserGroup._meta.verbose_name)
+            self.assertTrue(msgs[0], 'ID "%s"' % group.pk)
             self.assertFalse(self._group_exists('New test group'))
 
     def test_user_cant_change_others_group(self):
@@ -348,6 +352,7 @@ class PermissionsOnPageTest(PermissionsOnTestCase):
         group = self._get_group(created_by=admin)
         staff_user = self.get_staff_user_with_no_permissions()
         endpoint = self.get_admin_url(PageUserGroup, 'change', group.pk)
+        redirect_to = admin_reverse('index')
 
         data = model_to_dict(group)
         data['_continue'] = '1'
@@ -362,7 +367,10 @@ class PermissionsOnPageTest(PermissionsOnTestCase):
 
         with self.login_user_context(staff_user):
             response = self.client.post(endpoint, data)
-            self.assertEqual(response.status_code, 404)
+            self.assertRedirects(response, redirect_to)
+            msgs = CookieStorage(response)._decode(response.cookies['messages'].value)
+            self.assertTrue(msgs[0], PageUserGroup._meta.verbose_name)
+            self.assertTrue(msgs[0], 'ID "%s"' % group.pk)
             self.assertFalse(self._group_exists('New test group'))
 
     def test_user_can_delete_subordinate_group(self):
@@ -421,6 +429,7 @@ class PermissionsOnPageTest(PermissionsOnTestCase):
         staff_user = self.get_staff_user_with_no_permissions()
         staff_user.groups.add(group)
         endpoint = self.get_admin_url(PageUserGroup, 'delete', group.pk)
+        redirect_to = admin_reverse('index')
         data = {'post': 'yes'}
 
         self.add_permission(staff_user, 'delete_group')
@@ -433,12 +442,10 @@ class PermissionsOnPageTest(PermissionsOnTestCase):
 
         with self.login_user_context(staff_user):
             response = self.client.post(endpoint, data)
-            # The response is a 404 instead of a 403
-            # because the queryset is limited to objects
-            # that the user has permissions for.
-            # This queryset is used to fetch the object
-            # from the request, resulting in a 404.
-            self.assertEqual(response.status_code, 404)
+            self.assertRedirects(response, redirect_to)
+            msgs = CookieStorage(response)._decode(response.cookies['messages'].value)
+            self.assertTrue(msgs[0], PageUserGroup._meta.verbose_name)
+            self.assertTrue(msgs[0], 'ID "%s"' % group.pk)
             self.assertTrue(self._group_exists())
 
     def test_user_cant_delete_others_group(self):
@@ -450,6 +457,7 @@ class PermissionsOnPageTest(PermissionsOnTestCase):
         group = self._get_group(created_by=admin)
         staff_user = self.get_staff_user_with_no_permissions()
         endpoint = self.get_admin_url(PageUserGroup, 'delete', group.pk)
+        redirect_to = admin_reverse('index')
         data = {'post': 'yes'}
 
         self.add_permission(staff_user, 'delete_group')
@@ -462,10 +470,8 @@ class PermissionsOnPageTest(PermissionsOnTestCase):
 
         with self.login_user_context(staff_user):
             response = self.client.post(endpoint, data)
-            # The response is a 404 instead of a 403
-            # because the queryset is limited to objects
-            # that the user has permissions for.
-            # This queryset is used to fetch the object
-            # from the request, resulting in a 404.
-            self.assertEqual(response.status_code, 404)
+            self.assertRedirects(response, redirect_to)
+            msgs = CookieStorage(response)._decode(response.cookies['messages'].value)
+            self.assertTrue(msgs[0], PageUserGroup._meta.verbose_name)
+            self.assertTrue(msgs[0], 'ID "%s"' % group.pk)
             self.assertTrue(self._group_exists())

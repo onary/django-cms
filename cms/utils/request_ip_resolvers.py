@@ -1,9 +1,7 @@
-# -*- coding: utf-8 -*-
-
 import importlib
 
 from django.core.exceptions import ImproperlyConfigured
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from cms.utils.conf import get_cms_setting
 
@@ -19,14 +17,14 @@ def get_request_ip_resolver():
     try:
         ip_resolver_module = importlib.import_module(module)
         ip_resolver = getattr(ip_resolver_module, attribute)
-    except ImportError:
+    except ImportError as err:
         raise ImproperlyConfigured(
             _('Unable to find the specified CMS_REQUEST_IP_RESOLVER module: '
-              '"{0}".').format(module))
-    except AttributeError:
+              '"{0}".').format(module)) from err
+    except AttributeError as err:
         raise ImproperlyConfigured(
             _('Unable to find the specified CMS_REQUEST_IP_RESOLVER function: '
-              '"{0}" in module "{1}".').format(attribute, module))
+              '"{0}" in module "{1}".').format(attribute, module)) from err
     return ip_resolver
 
 
@@ -37,9 +35,7 @@ def default_request_ip_resolver(request):
     'X_FORWARDED_FOR' header which supersedes a 'REMOTE_ADDR' header.
     """
     return (
-        real_ip(request) or
-        x_forwarded_ip(request) or
-        remote_addr_ip(request)
+        real_ip(request) or x_forwarded_ip(request) or remote_addr_ip(request)
     )
 
 
@@ -50,7 +46,7 @@ def real_ip(request):
 
     Should handle Nginx and some other WSGI servers.
     """
-    return request.META.get('HTTP_X_REAL_IP')
+    return request.headers.get('X-Real-Ip')
 
 
 def remote_addr_ip(request):
@@ -70,7 +66,7 @@ def x_forwarded_ip(request):
 
     Should handle properly configured proxy servers.
     """
-    ip_address_list = request.META.get('HTTP_X_FORWARDED_FOR')
+    ip_address_list = request.headers.get('X-Forwarded-For')
     if ip_address_list:
         ip_address_list = ip_address_list.split(',')
         return ip_address_list[0]

@@ -1,19 +1,33 @@
-# -*- coding: utf-8 -*-
-from functools import update_wrapper
 import os
+from functools import update_wrapper
+from urllib.parse import urljoin
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
-from django.utils.translation import ugettext_lazy as _
-from six.moves.urllib.parse import urljoin
+from django.utils.translation import gettext_lazy as _
 
-from cms import constants
+from cms import __version__, constants
+
+__all__ = [
+    'get_cms_setting',
+    'get_site_id'
+]
 
 
-__all__ = ['get_cms_setting']
+class VERIFIED:
+    pass  # need a unique identifier for CMS_LANGUAGES
 
 
-class VERIFIED: pass  # need a unique identifier for CMS_LANGUAGES
+def _load_from_file(module_path):
+    """
+    Load a python module from its absolute filesystem path
+    """
+    from importlib.machinery import SourceFileLoader
+
+    imported = None
+    if module_path:
+        imported = SourceFileLoader("mod", module_path).load_module()
+    return imported
 
 
 def default(name):
@@ -34,6 +48,7 @@ DEFAULTS = {
     'DEFAULT_X_FRAME_OPTIONS': constants.X_FRAME_OPTIONS_INHERIT,
     'TOOLBAR_SIMPLE_STRUCTURE_MODE': True,
     'PLACEHOLDER_CONF': {},
+    'PLACEHOLDERS': (('', ('content',), _("Single placeholder")),),
     'PERMISSION': False,
     # Whether to use raw ID lookups for users when PERMISSION is True
     'RAW_ID_USERS': False,
@@ -48,19 +63,16 @@ DEFAULTS = {
     'PAGE_CACHE': True,
     'PLACEHOLDER_CACHE': True,
     'PLUGIN_CACHE': True,
-    'CACHE_PREFIX': 'cms-',
+    'CACHE_PREFIX': f'cms_{__version__}_',
     'PLUGIN_PROCESSORS': [],
     'PLUGIN_CONTEXT_PROCESSORS': [],
     'UNIHANDECODE_VERSION': None,
     'UNIHANDECODE_DECODERS': ['ja', 'zh', 'kr', 'vn', 'diacritic'],
     'UNIHANDECODE_DEFAULT_DECODER': 'diacritic',
-    'MAX_PAGE_PUBLISH_REVERSIONS': 10,
-    'MAX_PAGE_HISTORY_REVERSIONS': 15,
     'TOOLBAR_ANONYMOUS_ON': True,
-    'TOOLBAR_URL__EDIT_ON': 'edit',
-    'TOOLBAR_URL__EDIT_OFF': 'edit_off',
-    'TOOLBAR_URL__BUILD': 'build',
+    'TOOLBAR_URL__PERSIST': 'persist',
     'TOOLBAR_URL__DISABLE': 'toolbar_off',
+    'TOOLBAR_URL__ENABLE': 'toolbar_on',
     'ADMIN_NAMESPACE': 'admin',
     'APP_NAME': None,
     'TOOLBAR_HIDE': False,
@@ -70,6 +82,15 @@ DEFAULTS = {
     'PAGE_WIZARD_CONTENT_PLUGIN': 'TextPlugin',
     'PAGE_WIZARD_CONTENT_PLUGIN_BODY': 'body',
     'PAGE_WIZARD_CONTENT_PLACEHOLDER': None,  # Use first placeholder it finds.
+    'SIDEFRAME_ENABLED': True,
+    'CONFIRM_VERSION4': False,
+    'ENDPOINT_LIVE_URL_QUERYSTRING_PARAM_ENABLED': False,
+    'ENDPOINT_LIVE_URL_QUERYSTRING_PARAM': "live-url",
+    'REDIRECT_PRESERVE_QUERY_PARAMS': False,
+    'REDIRECT_TO_LOWERCASE_SLUG': False,
+    'HIDE_LEGACY_FEATURES': True,
+    'COLOR_SCHEME': 'auto',
+    'COLOR_SCHEME_TOGGLE': True,
 }
 
 
@@ -94,19 +115,9 @@ def get_media_url():
     return urljoin(settings.MEDIA_URL, get_cms_setting('MEDIA_PATH'))
 
 
-@default('CMS_TOOLBAR_URL__EDIT_ON')
-def get_toolbar_url__edit_on():
-    return get_cms_setting('TOOLBAR_URL__EDIT_ON')
-
-
-@default('CMS_TOOLBAR_URL__EDIT_OFF')
-def get_toolbar_url__edit_off():
-    return get_cms_setting('TOOLBAR_URL__EDIT_OFF')
-
-
-@default('CMS_TOOLBAR_URL__BUILD')
-def get_toolbar_url__build():
-    return get_cms_setting('TOOLBAR_URL__BUILD')
+@default('CMS_TOOLBAR_URL__PERSIST')
+def get_toolbar_url__persist():
+    return get_cms_setting('TOOLBAR_URL__PERSIST')
 
 
 @default('CMS_TOOLBAR_URL__DISABLE')
@@ -114,16 +125,20 @@ def get_toolbar_url__disable():
     return get_cms_setting('TOOLBAR_URL__DISABLE')
 
 
+@default('CMS_TOOLBAR_URL__ENABLE')
+def get_toolbar_url__enable():
+    return get_cms_setting('TOOLBAR_URL__ENABLE')
+
+
 def get_templates():
-    from cms.utils.django_load import load_from_file
     if getattr(settings, 'CMS_TEMPLATES_DIR', False):
         tpldir = getattr(settings, 'CMS_TEMPLATES_DIR', False)
-        # CMS_TEMPLATES_DIR can either be a string poiting to the templates directory
+        # CMS_TEMPLATES_DIR can either be a string pointing to the templates directory
         # or a dictionary holding 'site: template dir' entries
         if isinstance(tpldir, dict):
             tpldir = tpldir[settings.SITE_ID]
-        # We must extract the relative path of CMS_TEMPLATES_DIR to the neares
-        # valid templates directory. Here we mimick what the filesystem and
+        # We must extract the relative path of CMS_TEMPLATES_DIR to the nearest
+        # valid templates' directory. Here we mimic what the filesystem and
         # app_directories template loaders do
         prefix = ''
         # Relative to TEMPLATE['DIRS'] for filesystem loader
@@ -147,15 +162,25 @@ def get_templates():
         # Try to load templates list and names from the template module
         # If module file is not present skip configuration and just dump the filenames as templates
         if os.path.isfile(config_path):
-            template_module = load_from_file(config_path)
-            templates = [(os.path.join(prefix, data[0].strip()), data[1]) for data in template_module.TEMPLATES.items()]
+            template_module = _load_from_file(config_path)
+            templates = [
+                (os.path.join(prefix, data[0].strip()), data[1]) for data in template_module.TEMPLATES.items()
+            ]
         else:
             templates = list((os.path.join(prefix, tpl), tpl) for tpl in os.listdir(tpldir))
     else:
         templates = list(getattr(settings, 'CMS_TEMPLATES', []))
-    if get_cms_setting('TEMPLATE_INHERITANCE'):
+    if get_cms_setting('TEMPLATE_INHERITANCE') and templates:
         templates.append((constants.TEMPLATE_INHERITANCE_MAGIC, _('Inherit the template of the nearest ancestor')))
     return templates
+
+
+def get_placeholders():
+    if getattr(settings, 'CMS_PLACEHOLDERS', False):
+        return settings.CMS_PLACEHOLDERS
+    if getattr(settings, 'CMS_TEMPLATES', False) or getattr(settings, 'CMS_TEMPLATES_DIR', False):
+        return ()
+    return DEFAULTS['PLACEHOLDERS']
 
 
 def _ensure_languages_settings(languages):
@@ -195,7 +220,7 @@ def _ensure_languages_settings(languages):
             for key in language_object:
                 if key not in valid_language_keys:
                     raise ImproperlyConfigured(
-                        "CMS_LANGUAGES has invalid key %r in language %r in site %r" % (key, language_code, site)
+                        f"CMS_LANGUAGES has invalid key {key!r} in language {language_code!r} in site {site!r}"
                     )
 
             if 'fallbacks' not in language_object:
@@ -211,8 +236,9 @@ def _ensure_languages_settings(languages):
     for site, language_object in needs_fallbacks:
         if site not in site_fallbacks:
             site_fallbacks[site] = [lang['code'] for lang in languages[site] if lang['public']]
-        language_object['fallbacks'] = [lang_code for lang_code in site_fallbacks[site] if
-            lang_code != language_object['code']]
+        language_object['fallbacks'] = [
+            lang_code for lang_code in site_fallbacks[site] if lang_code != language_object['code']
+        ]
 
     languages['default'] = defaults
     languages[VERIFIED] = True  # this will be busted by @override_settings and cause a re-check
@@ -256,30 +282,18 @@ COMPLEX = {
     'MEDIA_URL': get_media_url,
     # complex because not prefixed by CMS_
     'TEMPLATES': get_templates,
+    'PLACEHOLDERS': get_placeholders,
     'LANGUAGES': get_languages,
     'UNIHANDECODE_HOST': get_unihandecode_host,
-    'CMS_TOOLBAR_URL__EDIT_ON': get_toolbar_url__edit_on,
-    'CMS_TOOLBAR_URL__EDIT_OFF': get_toolbar_url__edit_off,
-    'CMS_TOOLBAR_URL__BUILD': get_toolbar_url__build,
+    'CMS_TOOLBAR_URL__PERSIST': get_toolbar_url__persist,
     'CMS_TOOLBAR_URL__DISABLE': get_toolbar_url__disable,
-}
-
-DEPRECATED_CMS_SETTINGS = {
-    # Old CMS_WIZARD_* settings to be removed in v3.5.0
-    'PAGE_WIZARD_DEFAULT_TEMPLATE': 'WIZARD_DEFAULT_TEMPLATE',
-    'PAGE_WIZARD_CONTENT_PLUGIN': 'WIZARD_CONTENT_PLUGIN',
-    'PAGE_WIZARD_CONTENT_PLUGIN_BODY': 'WIZARD_CONTENT_PLUGIN_BODY',
-    'PAGE_WIZARD_CONTENT_PLACEHOLDER': 'WIZARD_CONTENT_PLACEHOLDER',
+    'CMS_TOOLBAR_URL__ENABLE': get_toolbar_url__enable,
 }
 
 
 def get_cms_setting(name):
     if name in COMPLEX:
         return COMPLEX[name]()
-    elif name in DEPRECATED_CMS_SETTINGS:
-        new_setting = 'CMS_%s' % name
-        old_setting = 'CMS_%s' % DEPRECATED_CMS_SETTINGS[name]
-        return getattr(settings, new_setting, getattr(settings, old_setting, DEFAULTS[name]))
     return getattr(settings, 'CMS_%s' % name, DEFAULTS[name])
 
 

@@ -1,442 +1,469 @@
-# -*- coding: utf-8 -*-
-import copy
-from collections import namedtuple
-import json
-import sys
-import uuid
+from __future__ import annotations
 
+import json
+import re
+from collections import namedtuple
 
 import django
-from django.contrib.admin.helpers import AdminForm
 from django.conf import settings
-from django.conf.urls import url
 from django.contrib import admin, messages
-from django.contrib.admin.models import LogEntry, CHANGE
-from django.contrib.admin.utils import get_deleted_objects, quote
+from django.contrib.admin.helpers import AdminForm
+from django.contrib.admin.options import IS_POPUP_VAR
+from django.contrib.admin.utils import get_deleted_objects
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.sites.models import Site
-from django.contrib.sites.shortcuts import get_current_site
-from django.core.exceptions import (MultipleObjectsReturned, ObjectDoesNotExist,
-                                    PermissionDenied, ValidationError)
-from django.db import router, transaction
-from django.db.models import Q
+from django.core.exceptions import (
+    ObjectDoesNotExist,
+    PermissionDenied,
+    ValidationError,
+)
+from django.db import transaction
+from django.db.models import Prefetch, Q
+from django.db.models.query import QuerySet
+from django.forms.fields import IntegerField
 from django.http import (
-    HttpResponseRedirect,
-    HttpResponse,
     Http404,
+    HttpResponse,
     HttpResponseBadRequest,
     HttpResponseForbidden,
+    HttpResponseRedirect,
+    QueryDict,
 )
-from django.shortcuts import render, get_object_or_404
+from django.shortcuts import get_object_or_404, render
 from django.template.defaultfilters import escape
-from django.utils.encoding import force_str
-from six.moves.urllib.parse import unquote
-from django.utils.translation import ugettext, ugettext_lazy as _, get_language
+from django.template.loader import get_template
+from django.template.response import SimpleTemplateResponse, TemplateResponse
+from django.urls import re_path
 from django.utils.decorators import method_decorator
+from django.utils.encoding import force_str
+from django.utils.safestring import mark_safe
+from django.utils.text import capfirst
+from django.utils.translation import gettext as _
 from django.views.decorators.http import require_POST
-from django.http import QueryDict
 
 from cms import operations
-from cms.admin.change_list import CMSChangeList
 from cms.admin.forms import (
+    AddPageForm,
     AdvancedSettingsForm,
+    ChangeListForm,
+    ChangePageForm,
+    CopyPageForm,
     CopyPermissionForm,
-    PageForm,
-    PagePermissionForm,
-    PublicationDatesForm,
+    DuplicatePageForm,
+    MovePageForm,
 )
 from cms.admin.permissionadmin import PERMISSION_ADMIN_INLINES
-from cms.admin.placeholderadmin import PlaceholderAdminMixin
-from cms.constants import (
-    PAGE_TREE_POSITIONS,
-    PAGE_TYPES_ID,
-    PUBLISHER_STATE_PENDING,
+from cms.cache.permissions import clear_permission_cache
+from cms.constants import MODAL_HTML_REDIRECT
+from cms.models import (
+    CMSPlugin,
+    GlobalPagePermission,
+    Page,
+    PageContent,
+    PagePermission,
+    Placeholder,
 )
-from cms.models import Page, Title, CMSPlugin, PagePermission, GlobalPagePermission, StaticPlaceholder
+from cms.operations.helpers import (
+    send_post_page_operation,
+    send_pre_page_operation,
+)
 from cms.plugin_pool import plugin_pool
-from cms.signals import pre_obj_operation, post_obj_operation
-from cms.toolbar_pool import toolbar_pool
-from cms.utils import permissions, get_language_from_request, copy_plugins
-from cms.utils import page_permissions
-from cms.utils.i18n import get_language_list, get_language_tuple, get_language_object, force_language
-from cms.utils.admin import jsonify_request, render_admin_rows
+from cms.signals.apphook import set_restart_trigger
+from cms.toolbar.utils import get_object_edit_url
+from cms.utils import get_current_site, page_permissions, permissions
+from cms.utils.admin import jsonify_request
 from cms.utils.conf import get_cms_setting
-from cms.utils.helpers import current_site
-from cms.utils.urlutils import add_url_parameters, admin_reverse
+from cms.utils.i18n import (
+    get_language_list,
+    get_language_object,
+    get_language_tuple,
+    get_site_language_from_request,
+)
+from cms.utils.permissions import clear_permission_lru_caches
+from cms.utils.plugins import copy_plugins_to_placeholder
+from cms.utils.urlutils import admin_reverse
 
 require_POST = method_decorator(require_POST)
 
 
-PUBLISH_COMMENT = "Publish"
+def get_site(request):
+    site_id = request.session.get('cms_admin_site')
+
+    if not site_id:
+        return get_current_site()
+
+    try:
+        site = Site.objects._get_site_by_id(site_id)
+    except Site.DoesNotExist:
+        site = get_current_site()
+    return site
 
 
-class PageAdmin(PlaceholderAdminMixin, admin.ModelAdmin):
-    form = PageForm
-    search_fields = ('=id', 'title_set__slug', 'title_set__title', 'reverse_id')
-    add_general_fields = ['title', 'slug', 'language', 'template']
-    change_list_template = "admin/cms/page/tree/base.html"
-    list_filter = ['in_navigation', 'template', 'changed_by', 'soft_root']
-    title_frontend_editable_fields = ['title', 'menu_title', 'page_title']
+@admin.register(Page)
+class PageAdmin(admin.ModelAdmin):
+    actions_menu_template = 'admin/cms/page/tree/actions_dropdown.html'
 
+    form = AdvancedSettingsForm
+    copy_form = CopyPageForm
+    move_form = MovePageForm
     inlines = PERMISSION_ADMIN_INLINES
+    search_fields = ('=id', 'urls__slug', 'pagecontent_set__title', 'reverse_id')
 
+    def has_module_permission(self, request):
+        return False  # Hides page model from the admin index
 
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        """
+        Return true if the current user has permission on the page.
+        Return the string 'All' if the user has all rights.
+        """
+        site = get_site(request)
+        if obj is None:
+            # Checks if user can change at least one page
+            return page_permissions.user_can_change_at_least_one_page(
+                user=request.user,
+                site=site,
+            )
+        return page_permissions.user_can_change_page(request.user, page=obj, site=site)
+
+    def has_change_advanced_settings_permission(self, request, obj=None):
+        if not obj:
+            return False
+        site = get_site(request)
+        return page_permissions.user_can_change_page_advanced_settings(request.user, page=obj, site=site)
+
+    def log_deletion(self, request, object, object_repr):
+        # Block the admin log for deletion. A signal takes care of this!
+        return
+
+    def get_admin_url(self, action, *args):
+        url_name = f"{self.opts.app_label}_{self.opts.model_name}_{action}"
+        return admin_reverse(url_name, args=args)
+
+    def get_preserved_filters(self, request):
+        """
+        This override is in place to preserve the "language" get parameter in
+        the "Save" page redirect
+        """
+        site = get_site(request)
+        preserved_filters_encoded = super().get_preserved_filters(request)
+        preserved_filters = QueryDict(preserved_filters_encoded).copy()
+        lang = get_site_language_from_request(request, site_id=site.pk)
+
+        if lang:
+            preserved_filters['language'] = lang
+        return preserved_filters.urlencode()
+
+    def get_queryset(self, request):
+        site = get_site(request)
+        queryset = super().get_queryset(request)
+        queryset = queryset.filter(site=site)
+        return queryset
+
+    def get_page_from_id(self, page_id):
+        page_id = self.model._meta.pk.to_python(page_id)
+
+        try:
+            page = self.model.objects.get(pk=page_id)
+        except self.model.DoesNotExist:
+            page = None
+        return page
 
     def get_urls(self):
         """Get the admin urls
         """
-        info = "%s_%s" % (self.model._meta.app_label, self.model._meta.model_name)
-        pat = lambda regex, fn: url(regex, self.admin_site.admin_view(fn), name='%s_%s' % (info, fn.__name__))
+        info = f"{self.model._meta.app_label}_{self.model._meta.model_name}"
+
+        def pat(regex, fn):
+            return re_path(regex, self.admin_site.admin_view(fn), name=f'{info}_{fn.__name__}')
 
         url_patterns = [
-            pat(r'^([0-9]+)/advanced-settings/$', self.advanced),
+            pat(r'^list/$', self.get_list),
             pat(r'^([0-9]+)/actions-menu/$', self.actions_menu),
-            pat(r'^([0-9]+)/dates/$', self.dates),
-            pat(r'^([0-9]+)/permission-settings/$', self.permissions),
-            pat(r'^([0-9]+)/delete-translation/$', self.delete_translation),
+            pat(r'^([0-9]+)/([a-z\-]+)/edit-field/$', self.edit_title_fields),
+            pat(r'^([0-9]+)/advanced-settings/$', self.advanced),
             pat(r'^([0-9]+)/move-page/$', self.move_page),
             pat(r'^([0-9]+)/copy-page/$', self.copy_page),
-            pat(r'^([0-9]+)/copy-language/$', self.copy_language),
             pat(r'^([0-9]+)/dialog/copy/$', self.get_copy_dialog),  # copy dialog
-            pat(r'^([0-9]+)/change-navigation/$', self.change_innavigation),
             pat(r'^([0-9]+)/permissions/$', self.get_permissions),
-            pat(r'^([0-9]+)/change-template/$', self.change_template),
-            pat(r'^([0-9]+)/([a-z\-]+)/edit-field/$', self.edit_title_fields),
-            pat(r'^([0-9]+)/([a-z\-]+)/publish/$', self.publish_page),
-            pat(r'^([0-9]+)/([a-z\-]+)/unpublish/$', self.unpublish),
-            pat(r'^([0-9]+)/([a-z\-]+)/preview/$', self.preview_page),
-            pat(r'^([0-9]+)/([a-z\-]+)/revert-to-live/$', self.revert_to_live),
-            pat(r'^add-page-type/$', self.add_page_type),
-            pat(r'^published-pages/$', self.get_published_pagelist),
-            url(r'^resolve/$', self.resolve, name="cms_page_resolve"),
-            url(r'^get-tree/$', self.get_tree, name="get_tree"),
+            pat(r'^([0-9]+)/set-home/$', self.set_home),
         ]
 
-        if plugin_pool.get_all_plugins():
+        if plugin_pool.registered_plugins:
             url_patterns += plugin_pool.get_patterns()
-
-        url_patterns += super(PageAdmin, self).get_urls()
-        return url_patterns
-
-    def _send_pre_page_operation(self, request, operation, **kwargs):
-        token = str(uuid.uuid4())
-        pre_obj_operation.send(
-            sender=self.__class__,
-            operation=operation,
-            request=request,
-            token=token,
-            **kwargs
-        )
-        return token
-
-    def _send_post_page_operation(self, request, operation, token, **kwargs):
-        post_obj_operation.send(
-            sender=self.__class__,
-            operation=operation,
-            request=request,
-            token=token,
-            **kwargs
-        )
-
-    def save_model(self, request, obj, form, change):
-        """
-        Move the page in the tree if necessary and save every placeholder
-        Content object.
-        """
-        from cms.extensions import extension_pool
-
-        target = request.GET.get('target', None)
-        position = request.GET.get('position', None)
-
-        new = False
-        if not obj.pk:
-            new = True
-        obj.save()
-
-        if target is not None and position is not None:
-            try:
-                target = self.model.objects.get(pk=target)
-            except self.model.DoesNotExist:
-                pass
-            else:
-                if position == 'last-child' or position == 'first-child':
-                    obj.parent_id = target.pk
-                else:
-                    obj.parent_id = target.parent_id
-                obj.save()
-                obj = obj.move(target, pos=position)
-        page_type_id = form.cleaned_data.get('page_type')
-        copy_target_id = request.GET.get('copy_target')
-        copy_target = None
-        if copy_target_id or page_type_id:
-            if page_type_id:
-                copy_target_id = page_type_id
-            copy_target = self.model.objects.get(pk=copy_target_id)
-            if not page_permissions.user_can_view_page(request.user, page=copy_target):
-                raise PermissionDenied()
-            obj = obj.reload()
-            copy_target._copy_attributes(obj, clean=True)
-            obj.save()
-            for lang in copy_target.get_languages():
-                copy_target._copy_contents(obj, lang)
-        if 'permission' not in request.path_info:
-            language = form.cleaned_data['language']
-            Title.objects.set_or_create(
-                request,
-                obj,
-                form,
-                language,
-            )
-        if copy_target:
-            extension_pool.copy_extensions(copy_target, obj)
-
-        # is it home? publish it right away
-        if new and Page.objects.filter(site_id=obj.site_id).count() == 1:
-            obj.publish(language)
-
-    def get_fieldsets(self, request, obj=None):
-        form = self.get_form(request, obj, fields=None)
-        if getattr(form, 'fieldsets', None) is None:
-            fields = list(form.base_fields) + list(self.get_readonly_fields(request, obj))
-            return [(None, {'fields': fields})]
-        else:
-            return form.fieldsets
+        return url_patterns + super().get_urls()
 
     def get_inline_instances(self, request, obj=None):
-        if obj and 'permission' in request.path_info:
-            return super(PageAdmin, self).get_inline_instances(request, obj)
-        return []
+        if obj and get_cms_setting('PERMISSION'):
+            can_change_perms = self.has_change_permissions_permission(request, obj=obj)
+        else:
+            can_change_perms = False
 
-    def get_form_class(self, request, obj=None, **kwargs):
-        if 'advanced' in request.path_info:
-            return AdvancedSettingsForm
-        elif 'permission' in request.path_info:
-            return PagePermissionForm
-        elif 'dates' in request.path_info:
-            return PublicationDatesForm
-        return self.form
+        if can_change_perms:
+            return super().get_inline_instances(request, obj)
+        return []
 
     def get_form(self, request, obj=None, **kwargs):
         """
         Get PageForm for the Page model and modify its fields depending on
         the request.
         """
-        language = get_language_from_request(request, obj)
-        form_cls = self.get_form_class(request, obj)
-        form = super(PageAdmin, self).get_form(request, obj, form=form_cls, **kwargs)
-        # get_form method operates by overriding initial fields value which
-        # may persist across invocation. Code below deepcopies fields definition
-        # to avoid leaks
-        for field in form.base_fields.keys():
-            form.base_fields[field] = copy.deepcopy(form.base_fields[field])
-
-        if 'language' in form.base_fields:
-            form.base_fields['language'].initial = language
-
-        if 'page_type' in form.base_fields:
-            if 'copy_target' in request.GET or 'add_page_type' in request.GET or obj:
-                del form.base_fields['page_type']
-            elif not Title.objects.filter(page__parent__reverse_id=PAGE_TYPES_ID, language=language).exists():
-                del form.base_fields['page_type']
-
-        if 'add_page_type' in request.GET:
-            del form.base_fields['menu_title']
-            del form.base_fields['meta_description']
-            del form.base_fields['page_title']
-
-        if obj:
-            title_obj = obj.get_title_obj(language=language, fallback=False, force_reload=True)
-
-            if 'site' in form.base_fields and form.base_fields['site'].initial is None:
-                form.base_fields['site'].initial = obj.site
-
-            for name in ('slug', 'title', 'meta_description', 'menu_title', 'page_title', 'redirect'):
-                if name in form.base_fields:
-                    form.base_fields[name].initial = getattr(title_obj, name)
-
-            if 'overwrite_url' in form.base_fields:
-                if title_obj.has_url_overwrite:
-                    form.base_fields['overwrite_url'].initial = title_obj.path
-                else:
-                    form.base_fields['overwrite_url'].initial = ''
-
-        else:
-            for name in ('slug', 'title'):
-                form.base_fields[name].initial = u''
-
-            if 'target' in request.GET or 'copy_target' in request.GET:
-                target = request.GET.get('copy_target') or request.GET.get('target')
-                if 'position' in request.GET:
-                    position = request.GET['position']
-                    if position == 'last-child' or position == 'first-child':
-                        form.base_fields['parent'].initial = request.GET.get('target', None)
-                    else:
-                        sibling = self.model.objects.get(pk=target)
-                        form.base_fields['parent'].initial = sibling.parent_id
-                else:
-                    form.base_fields['parent'].initial = request.GET.get('target', None)
-
-            form.base_fields['site'].initial = request.session.get('cms_admin_site', None)
-
+        form = super().get_form(request, obj, **kwargs)
+        form._site = get_site(request)
+        form._request = request
         return form
 
-    def advanced(self, request, object_id):
-        page = get_object_or_404(self.model, pk=object_id)
-        # always returns a valid language
-        language = get_language_from_request(request, current_page=page)
-        language_obj = get_language_object(language, site_id=page.site_id)
+    def actions_menu(self, request, object_id, extra_context=None):
+        page = self.get_object(request, object_id=object_id)
 
-        if not page.title_set.filter(language=language):
-            # Can't edit advanced settings for a page translation (title)
-            # that does not exist.
-            message = _("Please create the %(language)s page "
-                        "translation before editing it's advanced settings.")
-            message = message % {'language': language_obj['name']}
-            self.message_user(request, message, level=messages.ERROR)
-            path = admin_reverse('cms_page_change', args=(quote(object_id),))
-            return HttpResponseRedirect("%s?language=%s" % (path, language))
+        if page is None:
+            raise self._get_404_exception(object_id)
 
-        if not self.has_change_advanced_settings_permission(request, obj=page):
-            raise PermissionDenied("No permission for editing advanced settings")
-        return self.change_view(request, object_id, extra_context={'advanced_settings': True, 'title': _("Advanced Settings")})
-
-    def actions_menu(self, request, object_id):
-        page = get_object_or_404(self.model, pk=object_id)
+        site = get_site(request)
         paste_enabled = request.GET.get('has_copy') or request.GET.get('has_cut')
-        can_change_advanced_settings = self.has_change_advanced_settings_permission(request, obj=page)
-        has_change_permissions_permission = self.has_change_permissions_permission(request, obj=page)
-
         context = {
             'page': page,
-            'page_is_restricted': page.has_view_restrictions(),
+            'opts': self.opts,
+            'site': site,
+            'page_is_restricted': page.has_view_restrictions(site),
             'paste_enabled': paste_enabled,
             'has_add_permission': page_permissions.user_can_add_subpage(request.user, target=page),
+            'has_copy_page_permission': page_permissions.user_can_view_page_draft(request.user, page, site=site),
             'has_change_permission': self.has_change_permission(request, obj=page),
-            'has_change_advanced_settings_permission': can_change_advanced_settings,
-            'has_change_permissions_permission': has_change_permissions_permission,
+            'has_change_advanced_settings_permission': self.has_change_advanced_settings_permission(request, obj=page),
+            'has_change_permissions_permission': self.has_change_permissions_permission(request, obj=page),
             'has_move_page_permission': self.has_move_page_permission(request, obj=page),
             'has_delete_permission': self.has_delete_permission(request, obj=page),
             'CMS_PERMISSION': get_cms_setting('PERMISSION'),
         }
-        return render(request, "admin/cms/page/tree/actions_dropdown.html", context)
 
-    def dates(self, request, object_id):
-        return self.change_view(request, object_id, extra_context={'publishing_dates': True, 'title': _("Publishing dates")})
+        if extra_context:
+            context.update(extra_context)
+        return render(request, self.actions_menu_template, context)
 
-    def permissions(self, request, object_id):
-        page = get_object_or_404(self.model, pk=object_id)
+    def advanced(self, request, object_id):
+        page = self.get_object(request, object_id=object_id)
 
-        if not self.has_change_permissions_permission(request, obj=page):
+        if not self.has_change_advanced_settings_permission(request, obj=page):
             raise PermissionDenied("No permission for editing advanced settings")
-        return self.change_view(request, object_id, extra_context={'show_permissions': True, 'title': _("Change Permissions")})
 
-    def get_unihandecode_context(self, language):
-        if language[:2] in get_cms_setting('UNIHANDECODE_DECODERS'):
-            uhd_lang = language[:2]
-        else:
-            uhd_lang = get_cms_setting('UNIHANDECODE_DEFAULT_DECODER')
-        uhd_host = get_cms_setting('UNIHANDECODE_HOST')
-        uhd_version = get_cms_setting('UNIHANDECODE_VERSION')
-        if uhd_lang and uhd_host and uhd_version:
-            uhd_urls = [
-                '%sunihandecode-%s.core.min.js' % (uhd_host, uhd_version),
-                '%sunihandecode-%s.%s.min.js' % (uhd_host, uhd_version, uhd_lang),
-            ]
-        else:
-            uhd_urls = []
-        return {'unihandecode_lang': uhd_lang, 'unihandecode_urls': uhd_urls}
+        if page is None:
+            raise self._get_404_exception(object_id)
 
-    def add_view(self, request, form_url='', extra_context=None):
-        extra_context = extra_context or {}
-        language = get_language_from_request(request)
-        extra_context.update({
-            'language': language,
-        })
-        if not request.GET.get('add_page_type') is None:
-            extra_context.update({
-                'add_page_type': True,
-                'title':  _("Add Page Type"),
-            })
-        elif 'copy_target' in request.GET:
-            extra_context.update({
-                'title':  _("Add Page Copy"),
-            })
-        elif 'target' in request.GET:
-            extra_context.update({
-                'title':  _("New sub page"),
-            })
+        if get_cms_setting('PERMISSION'):
+            show_permissions = self.has_change_permissions_permission(request, obj=page)
         else:
-            extra_context = self.update_language_tab_context(request, context=extra_context)
-            extra_context.update({
-                'title':  _("New page"),
-            })
-        extra_context.update(self.get_unihandecode_context(language))
-        return super(PageAdmin, self).add_view(request, form_url, extra_context=extra_context)
+            show_permissions = False
+        context = {'title': _("Advanced Settings"), 'show_permissions': show_permissions}
+        return self.change_view(request, object_id, extra_context=context)
 
-    def change_view(self, request, object_id, form_url='', extra_context=None):
+    def response_post_save_change(self, request, obj):
         """
-        The 'change' admin view for the Page model.
+        Figure out where to redirect after the 'Save' button has been pressed
+        when adding a new object.
         """
-        if extra_context is None:
-            extra_context = {'basic_info': True}
-
-        try:
-            obj = self.model.objects.get(pk=object_id)
-        except self.model.DoesNotExist:
-            # Don't raise Http404 just yet, because we haven't checked
-            # permissions yet. We don't want an unauthenticated user to be able
-            # to determine whether a given object exists.
-            obj = None
-        else:
-            context = {
-                'page': obj,
-                'CMS_PERMISSION': get_cms_setting('PERMISSION'),
-                'can_change': self.has_change_permission(request, obj=obj),
-                'can_change_permissions': self.has_change_permissions_permission(request, obj=obj),
-            }
-            context.update(extra_context or {})
-            extra_context = self.update_language_tab_context(request, obj, context)
-
-        if 'advanced_settings' in extra_context or 'basic_info' in extra_context:
-            _has_advanced_settings_perm = self.has_change_advanced_settings_permission(request, obj=obj)
-            extra_context['can_change_advanced_settings'] = _has_advanced_settings_perm
-
-        tab_language = get_language_from_request(request)
-        extra_context.update(self.get_unihandecode_context(tab_language))
-
-        response = super(PageAdmin, self).change_view(
-            request, object_id, form_url=form_url, extra_context=extra_context)
-        if tab_language and response.status_code == 302 and response.headers['location'][1] == request.path_info:
-            location = response.headers['location']
-            response.headers['location'] = (location[0], "%s?language=%s" % (location[1], tab_language))
-        return response
-
-    def delete_model(self, request, obj):
-        operation_token = self._send_pre_page_operation(
-            request,
-            operation=operations.DELETE_PAGE,
-            obj=obj,
+        can_change_any_page = page_permissions.user_can_change_at_least_one_page(
+            user=request.user,
+            site=get_site(request),
+            use_cache=False,
         )
 
-        super(PageAdmin, self).delete_model(request, obj)
+        if can_change_any_page:
+            query = self.get_preserved_filters(request)
+            post_url = admin_reverse('cms_pagecontent_changelist') + '?' + query
+        else:
+            post_url = admin_reverse('index')
+        return HttpResponseRedirect(post_url)
 
-        self._send_post_page_operation(
-            request,
+    @require_POST
+    @transaction.atomic
+    def set_home(self, request, object_id):
+        page = self.get_object(request, object_id=object_id)
+
+        if not self.has_change_permission(request, page):
+            raise PermissionDenied("You do not have permission to set 'home'.")
+
+        if page is None:
+            raise self._get_404_exception(object_id)
+
+        if not page.is_potential_home():
+            return HttpResponseBadRequest(_("The page is not eligible to be home."))
+
+        new_home_tree, old_home_tree = page.set_as_homepage(request.user)
+
+        # Check if one of the affected pages either from the old homepage
+        # or the homepage had an apphook attached
+        if old_home_tree:
+            apphooks_affected = old_home_tree.has_apphooks()
+        else:
+            apphooks_affected = False
+
+        if not apphooks_affected:
+            apphooks_affected = new_home_tree.has_apphooks()
+
+        if apphooks_affected:
+            # One or more pages affected by this operation was attached to an apphook.
+            # As a result, fire the apphook reload signal to reload the url patterns.
+            set_restart_trigger()
+        return HttpResponse('ok')
+
+    def get_list(self, *args, **kwargs):
+        """
+         This view is used by the PageSmartLinkWidget as the user type to feed the autocomplete drop-down.
+        """
+        request = args[0]
+
+        if request.headers.get('x-requested-with') == 'XMLHttpRequest':
+            query_term = request.GET.get('q', '').strip('/')
+
+            language_code = request.GET.get('language_code', settings.LANGUAGE_CODE)
+            matching_published_pages = self.model.objects.filter(
+                Q(
+                    pagecontent_set__title__icontains=query_term, pagecontent_set__language=language_code
+                ) | Q(
+                    urls__path__icontains=query_term, pagecontent_set__language=language_code
+                ) | Q(
+                    pagecontent_set__menu_title__icontains=query_term, pagecontent_set__language=language_code
+                ) | Q(
+                    pagecontent_set__page_title__icontains=query_term, pagecontent_set__language=language_code
+                )
+            ).distinct()
+
+            results = []
+            for page in matching_published_pages:
+                results.append(
+                    {
+                        'path': page.get_path(language=language_code),
+                        'title': page.get_title(language=language_code),
+                        'redirect_url': page.get_absolute_url(language=language_code)
+                    }
+                )
+            return HttpResponse(json.dumps(results), content_type='application/json')
+        return HttpResponseForbidden()
+
+    def changelist_view(self, request, extra_context=None):
+        parameter = "?" + request.GET.urlencode() if request.GET else ""
+        return HttpResponseRedirect(admin_reverse('cms_pagecontent_changelist') + parameter)
+
+    def response_delete(self, request, obj_display, obj_id):
+        """
+        Determine the HttpResponse for the delete_view stage. Clear the user's permission
+        lru cache
+        """
+        clear_permission_lru_caches(request.user)
+        return super().response_delete(request, obj_display, obj_id)
+
+    def get_deleted_objects(self, objs, request):
+        """Minimize complexity of delete selected confirmation: Only show pages, page contents and plugins numbers,
+        only show Page and PageContent objects in the details.
+        """
+        def recursively_remove(deleted_objects: list | str) -> list:
+            """Remove all objects that are not Page or PageContent from the nested list of deleted objects.
+            Reformat the messages."""
+            if isinstance(deleted_objects, str):
+                return deleted_objects
+            result = []
+            for obj in deleted_objects:
+                item = recursively_remove(obj)
+                if isinstance(item, str):
+                    if obj.startswith(f"{capfirst(Page._meta.verbose_name)}: "):
+                        text = re.findall(r'>(.*)<', obj)
+                        if text:
+                            result.append(mark_safe("<b>" + text[0] + "</b>"))
+                        else:
+                            result.append(mark_safe(
+                                "<b>" + item.removeprefix(f"{capfirst(Page._meta.verbose_name)}: ") + "</b>"
+                            ))
+                    elif obj.startswith(f"{capfirst(PageContent._meta.verbose_name)}: "):
+                        result.insert(0, mark_safe(
+                            item.removeprefix(f"{capfirst(PageContent._meta.verbose_name)}: ")
+                        ))
+                elif item:
+                    result.append(item)
+            return result
+
+        to_delete, model_count, perms_needed, protected = super().get_deleted_objects(objs, request)
+        to_delete = recursively_remove(to_delete)
+        model_count = {
+            key: value for key, value in model_count.items() if key in (
+                Page._meta.verbose_name_plural,
+                PageContent._meta.verbose_name_plural,
+                CMSPlugin._meta.verbose_name_plural
+            )
+        }
+
+        return to_delete, model_count, perms_needed, protected
+
+    def delete_model(self, request, obj):
+        operation_token = send_pre_page_operation(
+            request=request,
+            operation=operations.DELETE_PAGE,
+            obj=obj,
+            sender=self.model
+        )
+
+        cms_pages = [obj]
+
+        if obj.is_branch:
+            descendant_ids = obj.get_descendants().values_list('id', flat=True)
+            cms_pages.extend(self.model.objects.filter(id__in=descendant_ids))
+
+        # Delete all associated pages contents
+        ct_page_content = ContentType.objects.get_for_model(PageContent)
+        page_content_objs = PageContent.admin_manager.filter(page__in=cms_pages).values_list('pk', flat=True)
+        placeholders = Placeholder.objects.filter(
+            content_type=ct_page_content,
+            object_id__in=page_content_objs,
+        )
+        plugins = CMSPlugin.objects.filter(placeholder__in=placeholders)
+        QuerySet.delete(plugins)
+        placeholders.delete()
+
+        super().delete_model(request, obj)
+
+        send_post_page_operation(
+            request=request,
             operation=operations.DELETE_PAGE,
             token=operation_token,
             obj=obj,
+            sender=self.model,
         )
+
+        clear_permission_cache()
+
+        if obj.application_urls:
+            set_restart_trigger()
 
     def get_copy_dialog(self, request, page_id):
         if not get_cms_setting('PERMISSION'):
             return HttpResponse('')
 
-        target_id = request.GET.get('target', False) or request.POST.get('target', False)
-        callback = request.GET.get('callback', False) or request.POST.get('callback', False)
-        page = get_object_or_404(self.model, pk=page_id)
-        can_change_page = self.has_change_permission(request, obj=page)
+        page = self.get_page_from_id(page_id)
 
-        if not can_change_page:
+        if page is None:
+            raise self._get_404_exception(page_id)
+
+        if request.method == 'GET':
+            data = request.GET
+        else:
+            data = request.POST
+
+        target_id = data.get('target')
+
+        try:
+            source_site_id = data['source_site']
+            source_site = Site.objects.get(pk=source_site_id)
+        except (KeyError, ObjectDoesNotExist):
+            return HttpResponseBadRequest('source_site is required')
+
+        site = get_site(request)
+        user = request.user
+        can_view_page = page_permissions.user_can_view_page(user, page, source_site)
+
+        if not can_view_page:
             raise PermissionDenied
 
         if target_id:
@@ -445,139 +472,33 @@ class PageAdmin(PlaceholderAdminMixin, admin.ModelAdmin):
             except Page.DoesNotExist:
                 raise Http404
 
-            if not page_permissions.user_can_add_subpage(request.user, target=target):
+            if not page_permissions.user_can_add_subpage(user, target, site):
                 raise PermissionDenied
+        elif not page_permissions.user_can_add_page(user, site):
+            raise PermissionDenied
 
         context = {
             'dialog_id': 'dialog-copy',
             'form': CopyPermissionForm(),  # class needs to be instantiated
-            'callback': callback,
+            'opts': self.opts,
         }
         return render(request, "admin/cms/page/tree/copy_premissions.html", context)
 
-    def get_filled_languages(self, obj):
-        filled_languages = []
-
-        if obj:
-            filled_languages = [t[0] for t in obj.title_set.filter(title__isnull=False).values_list('language')]
-        allowed_languages = [lang[0] for lang in self._get_site_languages(obj)]
-        return [lang for lang in filled_languages if lang in allowed_languages]
-
-    def render_change_form(self, request, context, add=False, change=False, form_url='', obj=None):
-        context['filled_languages'] = self.get_filled_languages(obj)
-        return super(PageAdmin, self).render_change_form(request, context, add, change, form_url, obj)
-
-    def _get_site_languages(self, obj=None):
-        if obj:
-            site_id = obj.site_id
-        else:
-            site_id = Site.objects.get_current().pk
-        return get_language_tuple(site_id)
-
-    def update_language_tab_context(self, request, obj=None, context=None):
-        if not context:
-            context = {}
-        language = get_language_from_request(request, obj)
-        languages = self._get_site_languages(obj)
-        context.update({
-            'language': language,
-            'language_tabs': languages,
-            # Dates are not language dependent, thus we hide the language
-            # selection bar: the language is forced through the form class
-            'show_language_tabs': len(list(languages)) > 1 and not context.get('publishing_dates', False),
+    def _get_404_exception(self, object_id):
+        exception = Http404(_('%(name)s object with primary key %(key)r does not exist.') % {
+            'name': force_str(self.opts.verbose_name),
+            'key': escape(object_id),
         })
-        return context
+        return exception
 
-    def response_change(self, request, obj):
-        """Called always when page gets changed, call save on page, there may be
-        some new stuff, which should be published after all other objects on page
-        are collected.
-        """
-        # save the object again, so all the related changes to page model
-        # can be published if required
-        obj.save()
-        return super(PageAdmin, self).response_change(request, obj)
-
-    def get_preserved_filters(self, request):
-        """
-        This override is in place to preserve the "language" get parameter in
-        the "Save" page redirect
-        """
-        preserved_filters_encoded = super(PageAdmin, self).get_preserved_filters(request)
-        preserved_filters = QueryDict(preserved_filters_encoded).copy()
-        lang = request.GET.get('language')
-
-        if lang:
-            preserved_filters.update({
-                'language': lang
-            })
-
-        return preserved_filters.urlencode()
-
-    def _has_add_permission_from_request(self, request):
-        position = request.GET.get('position', None)
-        target_page_id = request.GET.get('target', None)
-
-        if position and position not in PAGE_TREE_POSITIONS:
-            return False
-        elif not position and target_page_id:
-            # target was provided but no position
-            return False
-
-        if target_page_id:
-            try:
-                target = Page.objects.get(pk=target_page_id)
-            except Page.DoesNotExist:
-                return False
-        else:
-            target = None
-
-        site = current_site(request)
-
-        if target:
-            if position in ('last-child', 'first-child'):
-                parent = target
-            else:
-                parent = target.parent
-
-            has_perm = page_permissions.user_can_add_subpage(
-                request.user,
-                target=parent,
-                site=site,
-            )
-        else:
-            has_perm = page_permissions.user_can_add_page(request.user, site=site)
-        return has_perm
-
-    def has_add_permission(self, request):
-        """
-        Return true if the current user has permission to add a new page.
-        """
-        return self._has_add_permission_from_request(request)
-
-    def has_change_permission(self, request, obj=None):
-        """
-        Return true if the current user has permission on the page.
-        Return the string 'All' if the user has all rights.
-        """
-        if obj:
-            return page_permissions.user_can_change_page(request.user, page=obj)
-        can_change_page = page_permissions.user_can_change_at_least_one_page(
-            user=request.user,
-            site=current_site(request),
-            use_cache=False,
-        )
-        return can_change_page
-
-    def has_change_advanced_settings_permission(self, request, obj=None):
-        if not obj:
-            return False
-        return page_permissions.user_can_change_page_advanced_settings(request.user, page=obj)
+    def has_view_permission(self, request, obj=None):
+        return self.has_change_permission(request, obj)
 
     def has_change_permissions_permission(self, request, obj=None):
         if not obj:
             return False
-        return page_permissions.user_can_change_page_permissions(request.user, page=obj)
+        site = get_site(request)
+        return page_permissions.user_can_change_page_permissions(request.user, page=obj, site=site)
 
     def has_delete_permission(self, request, obj=None):
         """
@@ -585,85 +506,14 @@ class PageAdmin(PlaceholderAdminMixin, admin.ModelAdmin):
         """
         if not obj:
             return False
-        return page_permissions.user_can_delete_page(request.user, page=obj)
-
-    def has_delete_translation_permission(self, request, language, obj=None):
-        if not obj:
-            return False
-
-        has_perm = page_permissions.user_can_delete_page_translation(
-            user=request.user,
-            page=obj,
-            language=language,
-        )
-        return has_perm
+        site = get_site(request)
+        return page_permissions.user_can_delete_page(request.user, page=obj, site=site)
 
     def has_move_page_permission(self, request, obj=None):
         if not obj:
             return False
-        return page_permissions.user_can_move_page(user=request.user, page=obj)
-
-    def has_publish_permission(self, request, obj=None):
-        if not obj:
-            return False
-        return page_permissions.user_can_publish_page(request.user, page=obj)
-
-    def has_revert_to_live_permission(self, request, language, obj=None):
-        if not obj:
-            return False
-
-        has_perm = page_permissions.user_can_revert_page_to_live(
-            request.user,
-            page=obj,
-            language=language,
-        )
-        return has_perm
-
-    def get_placeholder_template(self, request, placeholder):
-        page = placeholder.page
-
-        if page:
-            return page.get_template()
-
-    def get_changelist(self, request, **kwargs):
-        return CMSChangeList
-
-    def changelist_view(self, request, extra_context=None):
-        site = current_site(request)
-
-        request.session['cms_admin_site'] = site.pk
-
-        # Language may be present in the GET dictionary but empty
-        language = request.GET.get('language', get_language())
-
-        if not language:
-            language = get_language()
-
-        context = {
-            'CMS_MEDIA_URL': get_cms_setting('MEDIA_URL'),
-            'CMS_PERMISSION': get_cms_setting('PERMISSION'),
-            'site_languages': get_language_list(site.pk),
-            'preview_language': language,
-            'cms_current_site': site,
-        }
-        context.update(extra_context or {})
-        return super(PageAdmin, self).changelist_view(request, extra_context=context)
-
-    @require_POST
-    def change_template(self, request, object_id):
-        page = get_object_or_404(self.model, pk=object_id)
-
-        if not self.has_change_permission(request, obj=page):
-            return HttpResponseForbidden(force_str(_("You do not have permission to change the template")))
-
-        to_template = request.POST.get("template", None)
-
-        if to_template not in dict(get_cms_setting('TEMPLATES')):
-            return HttpResponseBadRequest(force_str(_("Template not valid")))
-
-        page.template = to_template
-        page.save()
-        return HttpResponse(force_str(_("The template was successfully changed")))
+        site = get_site(request)
+        return page_permissions.user_can_move_page(user=request.user, page=obj, site=site)
 
     @require_POST
     @transaction.atomic
@@ -688,93 +538,58 @@ class PageAdmin(PlaceholderAdminMixin, admin.ModelAdmin):
             target=4, position=0 => target=4, position="first-child"
 
         """
-        target = request.POST.get('target', None)
-        position = request.POST.get('position', 0)
-        site_id = request.POST.get('site', None)
-        user = request.user
+        site = get_site(request)
+        page = self.get_object(request, object_id=page_id)
 
-        try:
-            position = int(position)
-        except (TypeError, ValueError):
-            position = 0
-
-        try:
-            page = self.model.objects.get(pk=page_id)
-        except self.model.DoesNotExist:
+        if page is None:
             return jsonify_request(HttpResponseBadRequest("error"))
 
-        try:
-            site = Site.objects.get(id=int(site_id))
-        except (TypeError, ValueError, MultipleObjectsReturned,
-                ObjectDoesNotExist):
-            site = get_current_site(request)
+        user = request.user
+        form = self.move_form(request.POST or None, page=page, site=site)
 
-        if target is None:
-            # Special case: If «target» is not provided, it means to let the
-            # page become a new root node.
-            try:
-                tb_target = Page.get_draft_root_node(position=position, site=site)
-                if page.is_sibling_of(tb_target) and page.path < tb_target.path:
-                    tb_position = "right"
-                else:
-                    tb_position = "left"
-            except IndexError:
-                # Move page to become the last root node.
-                tb_target = Page.get_draft_root_node(site=site)
-                tb_position = "right"
-        else:
-            try:
-                target = tb_target = self.model.objects.get(pk=int(target), site=site)
-            except (TypeError, ValueError, self.model.DoesNotExist):
-                return jsonify_request(HttpResponseBadRequest("error"))
-            if position == 0:
-                tb_position = "first-child"
-            else:
-                try:
-                    tb_target = target.get_children().filter(
-                        publisher_is_draft=True, site=site)[position]
-                    if page.is_sibling_of(tb_target) and page.path < tb_target.path:
-                        tb_position = "right"
-                    else:
-                        tb_position = "left"
-                except IndexError:
-                    tb_position = "last-child"
+        if not form.is_valid():
+            return jsonify_request(HttpResponseBadRequest("error"))
+
+        target = form.cleaned_data['target']
+        can_move_page = self.has_move_page_permission(request, obj=page)
 
         # Does the user have permissions to do this...?
-        if not self.has_move_page_permission(request, obj=page) or (
-                    target and not target.has_add_permission(user)):
-            return jsonify_request(
-                HttpResponseForbidden(
-                    force_str(_("Error! You don't have permissions to move "
-                                 "this page. Please reload the page"))))
+        if not can_move_page or (target and not target.has_add_permission(user)):
+            message = _(
+                "Error! You don't have permissions to move this page. Please reload the page"
+            )
+            return jsonify_request(HttpResponseForbidden(message))
 
-        operation_token = self._send_pre_page_operation(
-            request,
+        operation_token = send_pre_page_operation(
+            request=request,
             operation=operations.MOVE_PAGE,
             obj=page,
+            sender=self.model,
         )
 
-        page.move_page(tb_target, tb_position)
+        form.move_page()
 
-        # Fetch updated tree attributes from the database
-        page.refresh_from_db()
-
-        self._send_post_page_operation(
-            request,
+        send_post_page_operation(
+            request=request,
             operation=operations.MOVE_PAGE,
             token=operation_token,
             obj=page,
+            sender=self.model,
         )
         return jsonify_request(HttpResponse(status=200))
 
     def get_permissions(self, request, page_id):
         rows = []
         user = request.user
-        page = get_object_or_404(self.model, id=page_id)
-        site = get_current_site(request)
+        page = self.get_object(request, object_id=page_id)
+
+        if page is None:
+            raise self._get_404_exception(page_id)
+
+        site = get_site(request)
         PermissionRow = namedtuple('Permission', ['is_global', 'can_change', 'permission'])
 
-        global_permissions = GlobalPagePermission.objects.filter(sites__in=[page.site_id])
+        global_permissions = GlobalPagePermission.objects.filter(sites__in=[site.pk])
         can_change_global_permissions = permissions.user_can_change_global_permissions(user, site)
 
         for permission in global_permissions.iterator():
@@ -793,13 +608,14 @@ class PageAdmin(PlaceholderAdminMixin, admin.ModelAdmin):
         )
 
         if not can_change_global_permissions:
-            allowed_pages = frozenset(page_permissions.get_change_id_list(user, site, check_global=False))
+            allowed_pages = page_permissions.get_change_perm_tuples(user, site, check_global=False)
 
         for permission in _page_permissions.iterator():
             if can_change_global_permissions:
                 can_change = True
             else:
-                can_change = permission.page_id in allowed_pages
+                page_path = permission.page.path
+                can_change = any(perm_tuple.contains(page_path) for perm_tuple in allowed_pages)
 
             row = PermissionRow(
                 is_global=False,
@@ -811,594 +627,106 @@ class PageAdmin(PlaceholderAdminMixin, admin.ModelAdmin):
         context = {
             'page': page,
             'rows': rows,
+            'opts': self.opts,
         }
         return render(request, 'admin/cms/page/permissions.html', context)
 
     @require_POST
     @transaction.atomic
-    def copy_language(self, request, page_id):
-        source_language = request.POST.get('source_language')
-        target_language = request.POST.get('target_language')
-        page = Page.objects.get(pk=page_id)
-        placeholders = page.get_placeholders()
-
-        if not target_language or not target_language in get_language_list():
-            return HttpResponseBadRequest(force_str(_("Language must be set to a supported language!")))
-
-        for placeholder in placeholders:
-            plugins = list(
-                placeholder.get_plugins(language=source_language).order_by('path'))
-            if not placeholder.has_add_plugins_permission(request.user, plugins):
-                return HttpResponseForbidden(force_str(_('You do not have permission to copy these plugins.')))
-            copy_plugins.copy_plugins_to(plugins, placeholder, target_language)
-        return HttpResponse("ok")
-
-    @require_POST
-    @transaction.atomic
-    def copy_page(self, request, page_id, extra_context=None):
+    def copy_page(self, request, page_id):
         """
         Copy the page and all its plugins and descendants to the requested
         target, at the given position
-
-        NOTE: We have to change from one "coordinate system" to another to
-        adapt JSTree to Django Treebeard. See comments in move_page().
-
-        NOTE: This code handles more cases then are *currently* supported in
-        the UI, specifically, the target should never be None and the position
-        should never be non-zero. These are implemented, however, because we
-        intend to support these cases later.
         """
-        target = request.POST.get('target', None)
-        position = request.POST.get('position', None)
-        site_id = request.POST.get('site', None)
-        copy_permissions = request.POST.get('copy_permissions', False)
+        page = self.get_page_from_id(page_id)
 
-        try:
-            page = self.model.objects.get(pk=page_id)
-        except self.model.DoesNotExist:
-            return jsonify_request(HttpResponseBadRequest("Error"))
+        if page is None:
+            return jsonify_request(HttpResponseBadRequest("error"))
 
-        try:
-            position = int(position)
-        except (TypeError, ValueError):
-            position = 0
-        try:
-            site = Site.objects.get(id=int(site_id))
-        except (TypeError, ValueError, MultipleObjectsReturned,
-                ObjectDoesNotExist):
-            site = get_current_site(request)
+        user = request.user
+        site = get_site(request)
+        form = self.copy_form(request.POST or None, page=page, site=site)
 
-        if target is None:
-            # Special case: If «target» is not provided, it means to create the
-            # new page as a root node.
-            try:
-                tb_target = Page.get_draft_root_node(position=position, site=site)
-                tb_position = "left"
-            except IndexError:
-                # New page to become the last root node.
-                tb_target = Page.get_draft_root_node(site=site)
-                tb_position = "right"
-        else:
-            try:
-                tb_target = self.model.objects.get(pk=int(target), site=site)
-                assert tb_target.has_add_permission(request.user)
-            except (TypeError, ValueError, self.model.DoesNotExist,
-                    AssertionError):
-                return jsonify_request(HttpResponseBadRequest("Error"))
-            if position == 0:
-                # This is really the only possible value for position.
-                tb_position = "first-child"
-            else:
-                # But, just in case...
-                try:
-                    tb_target = tb_target.get_children().filter(
-                        publisher_is_draft=True, site=site)[position]
-                    tb_position = "left"
-                except IndexError:
-                    tb_position = "last-child"
-        try:
-            new_page = page.copy_page(tb_target, site, tb_position,
-                                      copy_permissions=copy_permissions)
-            results = {"id": new_page.pk}
-            return HttpResponse(
-                json.dumps(results), content_type='application/json')
-        except ValidationError:
-            exc = sys.exc_info()[1]
-            return jsonify_request(HttpResponseBadRequest(exc.messages))
+        if not form.is_valid():
+            return jsonify_request(HttpResponseBadRequest("error"))
 
-    @require_POST
-    @transaction.atomic
-    def revert_to_live(self, request, page_id, language):
-        """
-        Resets the draft version of the page to match the live one
-        """
-        page = get_object_or_404(
-            self.model,
-            pk=page_id,
-            publisher_is_draft=True,
-            title_set__language=language,
-        )
+        target = form.cleaned_data['target']
+        source_site = form.cleaned_data['source_site']
 
-        # ensure user has permissions to publish this page
-        if not self.has_revert_to_live_permission(request, language, obj=page):
-            return HttpResponseForbidden(force_str(_("You do not have permission to revert this page.")))
+        # User can only copy pages he can see
+        can_copy_page = page_permissions.user_can_view_page(user, page, source_site)
 
-        translation = page.get_title_obj(language=language)
-        operation_token = self._send_pre_page_operation(
-            request,
-            operation=operations.REVERT_PAGE_TRANSLATION_TO_LIVE,
-            obj=page,
-            translation=translation,
-        )
+        if can_copy_page and target:
+            # User can only copy a page into another one if he has permission
+            # to add a page under the target page.
+            can_copy_page = page_permissions.user_can_add_subpage(user, target, site)
+        elif can_copy_page:
+            # User can only copy / paste a page if he has permission to add a page
+            can_copy_page = page_permissions.user_can_add_page(user, site)
 
-        page.revert_to_live(language)
+        if not can_copy_page:
+            message = _("Error! You don't have permissions to copy this page.")
+            return jsonify_request(HttpResponseForbidden(message))
 
-        # Fetch updated translation
-        translation.refresh_from_db()
+        page_languages = page.get_languages()
+        site_languages = get_language_list(site_id=site.pk)
 
-        self._send_post_page_operation(
-            request,
-            operation=operations.REVERT_PAGE_TRANSLATION_TO_LIVE,
-            token=operation_token,
-            obj=page,
-            translation=translation,
-        )
-
-        messages.info(request, _('"%s" was reverted to the live version.') % page)
-
-        path = page.get_absolute_url(language=language)
-        path = '%s?%s' % (path, get_cms_setting('CMS_TOOLBAR_URL__EDIT_OFF'))
-        return HttpResponseRedirect(path)
-
-    @require_POST
-    @transaction.atomic
-    def publish_page(self, request, page_id, language):
-        all_published = True
-
-        try:
-            page = Page.objects.get(
-                pk=page_id,
-                publisher_is_draft=True,
-                title_set__language=language,
+        if not any(lang in page_languages for lang in site_languages):
+            message = _(
+                "Error! "
+                "The page you're pasting is not translated in any of the languages configured by the target site."
             )
-        except Page.DoesNotExist:
-            page = None
+            return jsonify_request(HttpResponseBadRequest(message))
 
-        statics = request.GET.get('statics', '')
-
-        if not statics and not page:
-            raise Http404("No page or static placeholder found for publishing.")
-
-        # ensure user has permissions to publish this page
-        if page and not self.has_publish_permission(request, obj=page):
-            return HttpResponseForbidden(force_str(_("You do not have permission to publish this page")))
-
-        if page:
-            operation_token = self._send_pre_page_operation(
-                request,
-                operation=operations.PUBLISH_PAGE_TRANSLATION,
-                obj=page,
-                translation=page.get_title_obj(language=language),
-            )
-            all_published = page.publish(language)
-            page = page.reload()
-            self._send_post_page_operation(
-                request,
-                operation=operations.PUBLISH_PAGE_TRANSLATION,
-                token=operation_token,
-                obj=page,
-                translation=page.get_title_obj(language=language),
-                successful=all_published,
-            )
-
-        if statics:
-            static_ids = statics.split(',')
-            static_placeholders = StaticPlaceholder.objects.filter(pk__in=static_ids)
-
-            for static_placeholder in static_placeholders.iterator():
-                # TODO: Maybe only send one signal...
-                # this would break the obj signal format though
-                operation_token = self._send_pre_page_operation(
-                    request,
-                    operation=operations.PUBLISH_STATIC_PLACEHOLDER,
-                    obj=static_placeholder,
-                    target_language=language,
-                )
-
-                published = static_placeholder.publish(request, language)
-
-                self._send_post_page_operation(
-                    request,
-                    operation=operations.PUBLISH_STATIC_PLACEHOLDER,
-                    token=operation_token,
-                    obj=static_placeholder,
-                    target_language=language,
-                )
-                if not published:
-                    all_published = False
-
-        if page:
-            if all_published:
-                if page.get_publisher_state(language) == PUBLISHER_STATE_PENDING:
-                    messages.warning(request, _("Page not published! A parent page is not published yet."))
-                else:
-                    messages.info(request, _('The content was successfully published.'))
-                LogEntry.objects.log_action(
-                    user_id=request.user.id,
-                    content_type_id=ContentType.objects.get_for_model(Page).pk,
-                    object_id=page_id,
-                    object_repr=page.get_title(language),
-                    action_flag=CHANGE,
-                )
-            else:
-                if page.get_publisher_state(language) == PUBLISHER_STATE_PENDING:
-                    messages.warning(request, _("Page not published! A parent page is not published yet."))
-                else:
-                    messages.warning(request, _("There was a problem publishing your content"))
-
-        if 'node' in request.GET or 'node' in request.POST:
-            # if request comes from tree..
-            # 204 -> request was successful but no response returned.
-            return HttpResponse(status=204)
-
-        if 'redirect' in request.GET:
-            return HttpResponseRedirect(request.GET['redirect'])
-        referrer = request.META.get('HTTP_REFERER', '')
-
-        path = admin_reverse("cms_page_changelist")
-        if request.GET.get('redirect_language'):
-            path = "%s?language=%s&page_id=%s" % (path, request.GET.get('redirect_language'), request.GET.get('redirect_page_id'))
-        if admin_reverse('index') not in referrer:
-            if all_published:
-                if page:
-                    if page.get_publisher_state(language) == PUBLISHER_STATE_PENDING:
-                        path = page.get_absolute_url(language, fallback=True)
-                    else:
-                        public_page = Page.objects.get(publisher_public=page.pk)
-                        path = '%s?%s' % (public_page.get_absolute_url(language, fallback=True), get_cms_setting('CMS_TOOLBAR_URL__EDIT_OFF'))
-                else:
-                    path = '%s?%s' % (referrer, get_cms_setting('CMS_TOOLBAR_URL__EDIT_OFF'))
-            else:
-                path = '/?%s' % get_cms_setting('CMS_TOOLBAR_URL__EDIT_OFF')
-
-        return HttpResponseRedirect(path)
-
-    @require_POST
-    @transaction.atomic
-    def unpublish(self, request, page_id, language):
-        """
-        Publish or unpublish a language of a page
-        """
-        site = Site.objects.get_current()
-        page = get_object_or_404(self.model, pk=page_id)
-
-        if not self.has_publish_permission(request, obj=page):
-            return HttpResponseForbidden(force_str(_("You do not have permission to unpublish this page")))
-
-        if not page.publisher_public_id:
-            return HttpResponseForbidden(force_str(_("This page was never published")))
-
-        try:
-            page.unpublish(language)
-            message = _('The %(language)s page "%(page)s" was successfully unpublished') % {
-                'language': get_language_object(language, site)['name'], 'page': page}
-            messages.info(request, message)
-            LogEntry.objects.log_action(
-                user_id=request.user.id,
-                content_type_id=ContentType.objects.get_for_model(Page).pk,
-                object_id=page_id,
-                object_repr=page.get_title(),
-                action_flag=CHANGE,
-                change_message=message,
-            )
-        except RuntimeError:
-            exc = sys.exc_info()[1]
-            messages.error(request, exc.message)
-        except ValidationError:
-            exc = sys.exc_info()[1]
-            messages.error(request, exc.message)
-        path = admin_reverse("cms_page_changelist")
-        if request.GET.get('redirect_language'):
-            path = "%s?language=%s&page_id=%s" % (path, request.GET.get('redirect_language'), request.GET.get('redirect_page_id'))
-        return HttpResponseRedirect(path)
-
-    def delete_translation(self, request, object_id, extra_context=None):
-        if 'language' in request.GET:
-            language = request.GET['language']
-        else:
-            language = get_language_from_request(request)
-
-        opts = Page._meta
-        titleopts = Title._meta
-        app_label = titleopts.app_label
-        pluginopts = CMSPlugin._meta
-
-        try:
-            obj = self.get_queryset(request).get(pk=unquote(object_id))
-        except self.model.DoesNotExist:
-            # Don't raise Http404 just yet, because we haven't checked
-            # permissions yet. We don't want an unauthenticated user to be able
-            # to determine whether a given object exists.
-            obj = None
-
-        if not self.has_delete_translation_permission(request, language, obj):
-            return HttpResponseForbidden(force_str(_("You do not have permission to change this page")))
-
-        if obj is None:
-            raise Http404(
-                _('%(name)s object with primary key %(key)r does not exist.') % {
-                    'name': force_str(opts.verbose_name),
-                    'key': escape(object_id)
-                })
-
-        if not len(list(obj.get_languages())) > 1:
-            raise Http404(_('There only exists one translation for this page'))
-
-        titleobj = get_object_or_404(Title, page__id=object_id, language=language)
-        saved_plugins = CMSPlugin.objects.filter(placeholder__page__id=object_id, language=language)
-
-        using = router.db_for_read(self.model)
-        kwargs = {
-            'admin_site': self.admin_site,
-            'user': request.user,
-            'using': using
-        }
-
-        deleted_objects, __, perms_needed = get_deleted_objects(
-            [titleobj],
-            titleopts,
-            **kwargs
-        )[:3]
-        to_delete_plugins, __, perms_needed_plugins = get_deleted_objects(
-            saved_plugins,
-            pluginopts,
-            **kwargs
-        )[:3]
-
-        deleted_objects.append(to_delete_plugins)
-        perms_needed = set(list(perms_needed) + list(perms_needed_plugins))
-
-        if request.method == 'POST':
-            if perms_needed:
-                raise PermissionDenied
-
-            operation_token = self._send_pre_page_operation(
-                request,
-                operation=operations.DELETE_PAGE_TRANSLATION,
-                obj=obj,
-                translation=titleobj,
-            )
-
-            message = _('Title and plugins with language %(language)s was deleted') % {
-                'language': force_str(get_language_object(language)['name'])
-            }
-            self.log_change(request, titleobj, message)
-            messages.success(request, message)
-
-            titleobj.delete()
-            for p in saved_plugins:
-                p.delete()
-
-            public = obj.publisher_public
-
-            if public:
-                public.save()
-
-            self._send_post_page_operation(
-                request,
-                operation=operations.DELETE_PAGE_TRANSLATION,
-                token=operation_token,
-                obj=obj,
-                translation=titleobj,
-            )
-
-            if not self.has_change_permission(request, None):
-                return HttpResponseRedirect(admin_reverse('index'))
-            return HttpResponseRedirect(admin_reverse('cms_page_changelist'))
-
-        context = {
-            "title": _("Are you sure?"),
-            "object_name": force_str(titleopts.verbose_name),
-            "object": titleobj,
-            "deleted_objects": deleted_objects,
-            "perms_lacking": perms_needed,
-            "opts": opts,
-            "root_path": admin_reverse('index'),
-            "app_label": app_label,
-        }
-        context.update(extra_context or {})
-        request.current_app = self.admin_site.name
-        return render(request, self.delete_confirmation_template or [
-            "admin/%s/%s/delete_confirmation.html" % (app_label, titleopts.object_name.lower()),
-            "admin/%s/delete_confirmation.html" % app_label,
-            "admin/delete_confirmation.html"
-        ], context)
-
-    def preview_page(self, request, object_id, language):
-        """
-        Redirecting preview function based on draft_id
-        """
-        page = get_object_or_404(self.model, id=object_id)
-        can_see_page = page_permissions.user_can_view_page(request.user, page)
-
-        if can_see_page and not self.has_change_permission(request, obj=page):
-            can_see_page = page.is_published(language)
-
-        if not can_see_page:
-            message = ugettext('You don\'t have permissions to see page "%(title)s"')
-            message = message % {'title': force_str(page)}
-            self.message_user(request, message, level=messages.ERROR)
-            return HttpResponseRedirect('/en/admin/cms/page/')
-
-        attrs = "?%s" % get_cms_setting('CMS_TOOLBAR_URL__EDIT_ON')
-        attrs += "&language=" + language
-        with force_language(language):
-            url = page.get_absolute_url(language) + attrs
-        site = get_current_site(request)
-        if not site == page.site:
-            url = "http%s://%s%s" % ('s' if request.is_secure() else '',
-            page.site.domain, url)
-        return HttpResponseRedirect(url)
-
-    @require_POST
-    def change_innavigation(self, request, page_id):
-        """
-        Switch the in_navigation of a page
-        """
-        page = get_object_or_404(self.model, pk=page_id)
-
-        if self.has_change_permission(request, obj=page):
-            page.toggle_in_navigation()
-            # 204 -> request was successful but no response returned.
-            return HttpResponse(status=204)
-        return HttpResponseForbidden(force_str(_("You do not have permission to change this page's in_navigation status")))
-
-    def get_tree(self, request):
-        """
-        Get html for the descendants (only) of given page or if no page_id is
-        provided, all the root nodes.
-
-        Used for lazy loading pages in cms.pagetree.js
-
-        Permission checks is done in admin_utils.get_admin_menu_item_context
-        which is called by admin_utils.render_admin_menu_item.
-        """
-        page_id = request.GET.get('pageId', None)
-        site_id = request.GET.get('site', None)
-
-        try:
-            site_id = int(site_id)
-            site = Site.objects.get(id=site_id)
-        except (TypeError, ValueError, MultipleObjectsReturned,
-                ObjectDoesNotExist):
-            site = get_current_site(request)
-
-        if page_id:
-            page = get_object_or_404(self.model, pk=int(page_id))
-            pages = page.get_children()
-        else:
-            pages = Page.get_root_nodes().filter(site=site, publisher_is_draft=True)
-
-        pages = (
-            pages
-            .select_related('parent', 'publisher_public', 'site')
-            .prefetch_related('children')
-        )
-        response = render_admin_rows(request, pages, site=site, filtered=False)
-        return HttpResponse(response)
-
-    def add_page_type(self, request):
-        site = Site.objects.get_current()
-        language = request.GET.get('language') or get_language()
-        target = request.GET.get('copy_target')
-
-        type_root, created = self.model.objects.get_or_create(reverse_id=PAGE_TYPES_ID, publisher_is_draft=True, site=site,
-                                                        defaults={'in_navigation': False})
-        type_title, created = Title.objects.get_or_create(page=type_root, language=language, slug=PAGE_TYPES_ID,
-                                                          defaults={'title': _('Page Types')})
-
-        url = add_url_parameters(admin_reverse('cms_page_add'), target=type_root.pk, position='first-child',
-                                 add_page_type=1, copy_target=target, language=language)
-
-        return HttpResponseRedirect(url)
-
-    def resolve(self, request):
-        if not request.user.is_staff:
-            return HttpResponse('/', content_type='text/plain')
-        obj = False
-        url = False
-        if request.session.get('cms_log_latest', False):
-            log = LogEntry.objects.get(pk=request.session['cms_log_latest'])
-            try:
-                obj = log.get_edited_object()
-            except (ObjectDoesNotExist, ValueError):
-                obj = None
-            del request.session['cms_log_latest']
-            if obj and obj.__class__ in toolbar_pool.get_watch_models() and hasattr(obj, 'get_absolute_url'):
-                # This is a test if the object url can be retrieved
-                # In case it can't, object it's not taken into account
-                try:
-                    force_str(obj.get_absolute_url())
-                except:
-                    obj = None
-            else:
-                obj = None
-        if not obj:
-            pk = request.GET.get('pk', False) or request.POST.get('pk', False)
-            full_model = request.GET.get('model') or request.POST.get('model', False)
-            if pk and full_model:
-                app_label, model = full_model.split('.')
-                if pk and app_label:
-                    ctype = ContentType.objects.get(app_label=app_label, model=model)
-                    try:
-                        obj = ctype.get_object_for_this_type(pk=pk)
-                    except ctype.model_class().DoesNotExist:
-                        obj = None
-                    try:
-                        force_str(obj.get_absolute_url())
-                    except:
-                        obj = None
-        if obj:
-            if not getattr(request, 'toolbar', False) or not getattr(request.toolbar, 'edit_mode', False):
-                if isinstance(obj, Page):
-                    if obj.get_public_object():
-                        url = obj.get_public_object().get_absolute_url()
-                    else:
-                        url = '%s?%s' % (
-                            obj.get_draft_object().get_absolute_url(),
-                            get_cms_setting('CMS_TOOLBAR_URL__EDIT_ON')
-                        )
-                else:
-                    url = obj.get_absolute_url()
-            else:
-                url = obj.get_absolute_url()
-        if url:
-            return HttpResponse(force_str(url), content_type='text/plain')
-        return HttpResponse('', content_type='text/plain')
-
-    def lookup_allowed(self, key, *args, **kwargs):
-        if key == 'site__exact':
-            return True
-        return super(PageAdmin, self).lookup_allowed(key, *args, **kwargs)
+        new_page = form.copy_page(user)
+        return HttpResponse(json.dumps({"id": new_page.pk}), content_type='application/json')
 
     def edit_title_fields(self, request, page_id, language):
-        title = Title.objects.get(page_id=page_id, language=language)
+        page = self.get_object(request, object_id=page_id)
+        translation = page.get_admin_content(language)
+
+        if not self.has_change_permission(request, obj=page):
+            return HttpResponseForbidden(_("You do not have permission to edit this page"))
+
+        if page is None:
+            raise self._get_404_exception(page_id)
+
+        if not translation:
+            raise Http404('No translation matches requested language.')
+
         saved_successfully = False
         raw_fields = request.GET.get("edit_fields", 'title')
         edit_fields = [field for field in raw_fields.split(",") if field in self.title_frontend_editable_fields]
         cancel_clicked = request.POST.get("_cancel", False)
-        opts = Title._meta
+        opts = PageContent._meta
 
         if not edit_fields:
             # Defaults to title
             edit_fields = ('title',)
-
-        if not self.has_change_permission(request, obj=title.page):
-            return HttpResponseForbidden(force_str(_("You do not have permission to edit this page")))
 
         class PageTitleForm(django.forms.ModelForm):
             """
             Dynamic form showing only the fields to be edited
             """
             class Meta:
-                model = Title
+                model = PageContent
                 fields = edit_fields
 
         if not cancel_clicked and request.method == 'POST':
-            form = PageTitleForm(instance=title, data=request.POST)
+            form = PageTitleForm(instance=translation, data=request.POST)
             if form.is_valid():
                 form.save()
                 saved_successfully = True
         else:
-            form = PageTitleForm(instance=title)
+            form = PageTitleForm(instance=translation)
         admin_form = AdminForm(form, fieldsets=[(None, {'fields': edit_fields})], prepopulated_fields={},
                                model_admin=self)
         media = self.media + admin_form.media
         context = {
             'CMS_MEDIA_URL': get_cms_setting('MEDIA_URL'),
             'title': 'Title',
-            'plugin': title.page,
-            'plugin_id': title.page.id,
+            'plugin': page,
+            'plugin_id': page.pk,
             'adminform': admin_form,
             'add': False,
             'is_popup': True,
@@ -1419,34 +747,714 @@ class PageAdmin(PlaceholderAdminMixin, admin.ModelAdmin):
             return render(request, 'admin/cms/page/plugin/confirm_form.html', context)
         return render(request, 'admin/cms/page/plugin/change_form.html', context)
 
-    def get_published_pagelist(self, *args, **kwargs):
+
+@admin.register(PageContent)
+class PageContentAdmin(admin.ModelAdmin):
+    ordering = ('page__path',)
+    search_fields = ('=id', 'page__id', 'page__urls__slug', 'title', 'page__reverse_id')
+    change_form_template = "admin/cms/page/change_form.html"
+    change_list_template = "admin/cms/page/tree/base.html"
+    actions_menu_template = 'admin/cms/page/tree/actions_dropdown.html'
+    page_tree_row_template = 'admin/cms/page/tree/menu.html'
+
+    form = AddPageForm
+    add_form = form
+    change_form = ChangePageForm
+    copy_form = CopyPageForm
+    move_form = MovePageForm
+    changelist_form = ChangeListForm
+    duplicate_form = DuplicatePageForm
+
+    def log_addition(self, request, object, object_repr):
+        # Block the admin log for addition. A signal takes care of this!
+        return
+
+    def log_deletion(self, request, object, object_repr):
+        # Block the admin log for deletion. A signal takes care of this!
+        return
+
+    def log_change(self, request, object, message):
+        # Block the admin log for change. A signal takes care of this!
+        return
+
+    def get_admin_url(self, action, *args):
+        url_name = f"{self.opts.app_label}_{self.opts.model_name}_{action}"
+        return admin_reverse(url_name, args=args)
+
+    def get_preserved_filters(self, request):
         """
-         This view is used by the PageSmartLinkWidget as the user type to feed the autocomplete drop-down.
+        This override is in place to preserve the "language" get parameter in
+        the "Save" page redirect
         """
-        request = args[0]
+        site = get_site(request)
+        preserved_filters_encoded = super().get_preserved_filters(request)
+        preserved_filters = QueryDict(preserved_filters_encoded).copy()
+        lang = get_site_language_from_request(request, site_id=site.pk)
 
-        if request.is_ajax():
-            query_term = request.GET.get('q','').strip('/')
+        if lang:
+            preserved_filters['language'] = lang
+        return preserved_filters.urlencode()
 
-            language_code = request.GET.get('language_code', settings.LANGUAGE_CODE)
-            matching_published_pages = self.model.objects.published().public().filter(
-                Q(title_set__title__icontains=query_term, title_set__language=language_code)
-                | Q(title_set__path__icontains=query_term, title_set__language=language_code)
-                | Q(title_set__menu_title__icontains=query_term, title_set__language=language_code)
-                | Q(title_set__page_title__icontains=query_term, title_set__language=language_code)
-            ).distinct()
+    def get_queryset(self, request):
+        site = get_site(request)
+        languages = get_language_list(site.pk)
+        queryset = super().get_queryset(request).select_related('page')
+        queryset = queryset.filter(language__in=languages, page__site=site)
+        return queryset
 
-            results = []
-            for page in matching_published_pages:
-                results.append(
-                    {
-                        'path': page.get_path(language=language_code),
-                        'title': page.get_title(language=language_code),
-                        'redirect_url': page.get_absolute_url(language=language_code)
-                    }
-                )
-            return HttpResponse(json.dumps(results), content_type='application/json')
-        return HttpResponseForbidden()
+    def get_urls(self):
+        """Get the admin urls
+        """
+        info = f"{self.model._meta.app_label}_{self.model._meta.model_name}"
 
+        def pat(regex, fn):
+            return re_path(regex, self.admin_site.admin_view(fn), name=f'{info}_{fn.__name__}')
 
-admin.site.register(Page, PageAdmin)
+        url_patterns = [
+            pat(r'^get-tree/$', self.get_tree),
+            pat(r'^([0-9]+)/duplicate/$', self.duplicate),
+            pat(r'^([0-9]+)/copy-language/$', self.copy_language),
+            pat(r'^([0-9]+)/change-navigation/$', self.change_innavigation),
+            pat(r'^([0-9]+)/change-template/$', self.change_template),
+        ]
+        return url_patterns + super().get_urls()
+
+    def get_fieldsets(self, request, obj=None):
+        form = self.get_form(request, obj, fields=None)
+
+        try:
+            fieldsets = form.fieldsets
+        except AttributeError:
+            fields = list(form.base_fields) + list(self.get_readonly_fields(request, obj))
+            fieldsets = [(None, {'fields': fields})]
+        return fieldsets
+
+    def get_form_class(self, request, obj=None, **kwargs):
+        if 'change' in request.path_info:
+            return self.change_form
+        elif 'duplicate' in request.path_info:
+            return self.duplicate_form
+        return self.add_form
+
+    def get_form(self, request, obj=None, **kwargs):
+        """
+        Get PageForm for the Page model and modify its fields depending on
+        the request.
+        """
+        form = super().get_form(
+            request,
+            obj,
+            form=self.get_form_class(request, obj),
+            **kwargs
+        )
+        form._site = get_site(request)
+        form._request = request
+        return form
+
+    def slug(self, obj):
+        # For read-only views: Get slug from the page
+        if not hasattr(self, "url_obj"):
+            self.url_obj = obj.page.get_url(obj.language)
+        return self.url_obj.slug
+
+    def overwrite_url(self, obj):
+        # For read-only views: Get slug from the page
+        if not hasattr(self, "url_obj"):
+            self.url_obj = obj.page.get_url(obj.language)
+        if self.url_obj.managed:
+            return None
+        return self.url_obj.path
+
+    def duplicate(self, request, object_id):
+        """
+        Leverages the add view logic to duplicate the page.
+        """
+        obj = self.get_object(request, object_id=object_id)
+
+        if obj is None:
+            raise self._get_404_exception(object_id)
+
+        if request.method == 'GET':
+            # source is a field in the form
+            # because its value is in the url,
+            # we have to set the initial value manually
+            request.GET = request.GET.copy()
+            request.GET['source'] = obj.page_id
+        return self.add_view(request)
+
+    def add_view(self, request, form_url='', extra_context=None):
+        site = get_site(request)
+        language = get_site_language_from_request(request, site_id=site.pk)
+
+        if extra_context is None:
+            extra_context = {}
+
+        if 'duplicate' in request.path_info:
+            extra_context.update({
+                'title': _("Add Page Copy"),
+            })
+        elif 'parent_page' in request.GET:
+            extra_context.update({
+                'title': _("New sub page"),
+            })
+        else:
+            extra_context.update({
+                'title': _("New page"),
+            })
+
+        try:
+            page_id = request.GET.get('cms_page') or request.POST.get('cms_page')
+            page_id = IntegerField().clean(page_id)
+            cms_page = Page.objects.get(pk=page_id)
+        except (ValidationError, Page.DoesNotExist):
+            cms_page = None
+
+        if cms_page:
+            extra_context['cms_page'] = cms_page
+            extra_context['language_tabs'] = get_language_tuple(site.pk)
+            extra_context['filled_languages'] = self.get_filled_languages(request, cms_page)
+            extra_context['show_language_tabs'] = len(extra_context['language_tabs'])
+        extra_context['language'] = language
+        return super().add_view(request, form_url, extra_context=extra_context)
+
+    def change_view(self, request, object_id, form_url='', extra_context=None):
+        """
+        The 'change' admin view for the PageContent model.
+        """
+        if extra_context is None:
+            extra_context = {'basic_info': True}
+
+        obj = self.get_object(request, object_id=object_id)
+
+        if obj is None:
+            raise self._get_404_exception(object_id)
+
+        site = get_site(request)
+        context = {
+            'cms_page': obj.page,
+            'CMS_PERMISSION': get_cms_setting('PERMISSION'),
+            'can_change': self.has_change_permission(request, obj=obj),
+            'language': obj.language,
+            'language_tabs': get_language_tuple(site.pk),
+            'filled_languages': self.get_filled_languages(request, obj.page)
+        }
+        context['show_language_tabs'] = len(context['language_tabs'])
+        context.update(extra_context or {})
+
+        if 'basic_info' in extra_context:
+            _has_advanced_settings_perm = self.has_change_advanced_settings_permission(request, obj=obj)
+            context['can_change_advanced_settings'] = _has_advanced_settings_perm
+
+        return super().change_view(request, object_id, form_url=form_url, extra_context=context)
+
+    def response_add(self, request, obj):
+        redirect = request.POST.get("edit", False)
+        if redirect == "1":
+            from django.core.cache import cache
+
+            from cms.cache.permissions import get_cache_key, get_cache_permission_version
+            cache.delete(get_cache_key(request.user, 'change_page'), version=get_cache_permission_version())
+
+            # redirect to the edit view if added from the toolbar
+            url = get_object_edit_url(obj)  # Redirects to preview if necessary
+            return HttpResponse(MODAL_HTML_REDIRECT.format(url=url))
+        return super().response_add(request, obj)
+
+    def get_filled_languages(self, request, page):
+        site_id = get_site(request).pk
+        filled_languages = page.get_languages()
+        allowed_languages = [lang[0] for lang in get_language_tuple(site_id)]
+        return [lang for lang in filled_languages if lang in allowed_languages]
+
+    def _get_404_exception(self, object_id):
+        exception = Http404(_('%(name)s object with primary key %(key)r does not exist.') % {
+            'name': force_str(self.opts.verbose_name),
+            'key': escape(object_id),
+        })
+        return exception
+
+    def _has_add_permission_from_request(self, request):
+        site = get_site(request)
+        if parent_id := request.GET.get('parent_page'):
+            try:
+                parent_id = IntegerField().clean(parent_id)
+                parent_item = Page.objects.get(id=parent_id)
+            except (ValidationError, Page.DoesNotExist):
+                return False
+        else:
+            parent_item = None
+
+        if parent_item:
+            has_perm = page_permissions.user_can_add_subpage(
+                request.user,
+                target=parent_item,
+                site=site,
+            )
+        else:
+            has_perm = page_permissions.user_can_add_page(request.user, site=site)
+        return has_perm
+
+    def has_add_permission(self, request):
+        """
+        Return true if the current user has permission to add a new page.
+        """
+        return self._has_add_permission_from_request(request)
+
+    def has_change_permission(self, request, obj=None):
+        """
+        Return true if the current user has permission on the page.
+        Return the string 'All' if the user has all rights.
+        """
+        site = get_site(request)
+
+        if obj:
+            return page_permissions.user_can_change_page(request.user, page=obj.page, site=site)
+        can_change_page = page_permissions.user_can_change_at_least_one_page(
+            user=request.user,
+            site=site,
+        )
+        return can_change_page
+
+    def has_view_permission(self, request, obj=None):
+        """
+        Return true if the current user has permission on the page.
+        Return the string 'All' if the user has all rights.
+        """
+        # Identical to has_change_permission, but will remain untouched by any subclassing
+        # as done, e.g., by djangocms-versioning
+        site = get_site(request)
+
+        if obj:
+            return page_permissions.user_can_change_page(request.user, page=obj.page, site=site)
+        can_view_page = page_permissions.user_can_change_at_least_one_page(
+            user=request.user,
+            site=get_site(request),
+            use_cache=False,
+        )
+        return can_view_page
+
+    def has_delete_permission(self, request, obj=None):
+        """
+        Returns True if the current user has permission to delete the page.
+        """
+        if not obj:
+            return False
+        site = get_site(request)
+        return page_permissions.user_can_delete_page(request.user, page=obj.page, site=site)
+
+    def has_change_advanced_settings_permission(self, request, obj=None):
+        if not obj:
+            return False
+        site = get_site(request)
+        return page_permissions.user_can_change_page_advanced_settings(request.user, page=obj.page, site=site)
+
+    def has_delete_translation_permission(self, request, language, obj=None):
+        if not obj:
+            return False
+
+        site = get_site(request)
+        has_perm = page_permissions.user_can_delete_page_translation(
+            user=request.user,
+            page=obj,
+            language=language,
+            site=site,
+        )
+        return has_perm
+
+    def get_sites_for_user(self, user):
+        sites = Site.objects.order_by('name')
+
+        if not get_cms_setting('PERMISSION') or user.is_superuser:
+            return sites
+        _has_perm = page_permissions.user_can_change_at_least_one_page
+        return [site for site in sites if _has_perm(user, site)]
+
+    def changelist_view(self, request, extra_context=None):
+        from django.contrib.admin.views.main import ERROR_FLAG
+
+        if not self.has_change_permission(request, obj=None):
+            raise PermissionDenied
+
+        if request.method == 'POST' and 'site' in request.POST:
+            site_id = request.POST['site']
+
+            if site_id.isdigit() and Site.objects.filter(pk=site_id).exists():
+                request.session['cms_admin_site'] = site_id
+
+        site = get_site(request)
+        language = get_site_language_from_request(request, site_id=site.pk)
+        query = request.GET.get('q', '')
+        page_contents = self.get_queryset(request)
+        page_contents, _ = self.get_search_results(request, page_contents, query)
+        changelist_form = self.changelist_form(request.GET)
+
+        try:
+            changelist_form.full_clean()
+            page_contents = changelist_form.run_filters(page_contents)
+        except (ValueError, ValidationError):
+            # Wacky lookup parameters were given, so redirect to the main
+            # changelist page, without parameters, and pass an 'invalid=1'
+            # parameter via the query string. If wacky parameters were given
+            # and the 'invalid=1' parameter was already in the query string,
+            # something is screwed up with the database, so display an error
+            # page.
+            if ERROR_FLAG in request.GET.keys():
+                return SimpleTemplateResponse('admin/invalid_setup.html', {
+                    'title': _('Database error'),
+                })
+            return HttpResponseRedirect(request.path + '?' + ERROR_FLAG + '=1')
+
+        pages = (
+            Page
+            .objects
+            .on_site(site)
+            .filter(pagecontent_set__in=page_contents)
+            .distinct()
+            .order_by('path')
+        )
+        pages = pages.prefetch_related(
+            Prefetch(
+                'pagecontent_set',
+                to_attr='filtered_translations',
+                queryset=page_contents,
+            ),
+        )
+
+        if changelist_form.is_filtered():
+            # Evaluates the queryset
+            has_items = len(pages) >= 1
+        else:
+            has_items = pages.exists()
+
+        context = self.admin_site.each_context(request)
+        context.update({
+            'opts': self.model._meta,
+            'media': self.media,
+            'CMS_MEDIA_URL': get_cms_setting('MEDIA_URL'),
+            'CMS_PERMISSION': get_cms_setting('PERMISSION'),
+            'site_languages': get_language_tuple(site.pk),
+            'preview_language': language,
+            'changelist_form': changelist_form,
+            'cms_current_site': site,
+            'has_add_permission': self.has_add_permission(request),
+            'module_name': force_str(self.model._meta.verbose_name_plural),
+            'admin': self,
+            'tree': {
+                'site': site,
+                'sites': self.get_sites_for_user(request.user),
+                'query': query,
+                'is_filtered': changelist_form.is_filtered(),
+                'items': pages,
+                'has_items': has_items,
+            },
+        })
+        context.update(extra_context or {})
+        request.current_app = self.admin_site.name
+        return TemplateResponse(request, self.change_list_template, context)
+
+    @require_POST
+    def change_template(self, request, object_id):
+        page_content = self.get_object(request, object_id=object_id)
+
+        if not self.has_change_permission(request, obj=page_content):
+            raise PermissionDenied('No permissions to change the template')
+
+        if page_content is None:
+            raise self._get_404_exception(object_id)
+
+        if not self.has_change_advanced_settings_permission(request, obj=page_content):
+            raise PermissionDenied('No permissions to change the template')
+
+        to_template = request.POST.get("template", None)
+
+        if get_cms_setting('TEMPLATES'):
+            if to_template not in dict(get_cms_setting('TEMPLATES')):
+                return HttpResponseBadRequest(_("Template not valid"))
+        else:
+            if to_template not in (placeholder_set[0] for placeholder_set in get_cms_setting('PLACEHOLDERS')):
+                return HttpResponseBadRequest(_("Placeholder selection not valid"))
+
+        page_content.template = to_template
+        page_content.save()
+
+        return HttpResponse(_("The template was successfully changed"))
+
+    @require_POST
+    @transaction.atomic
+    def copy_language(self, request, object_id):
+        target_language = request.POST.get('target_language')
+        source_page_content = self.get_object(request, object_id=object_id)
+
+        if not self.has_change_permission(request, obj=source_page_content):
+            raise PermissionDenied
+
+        if source_page_content is None:
+            raise self._get_404_exception(object_id)
+
+        page = source_page_content.page
+
+        if not target_language or target_language not in get_language_list(site_id=page.site_id):
+            return HttpResponseBadRequest(_("Language must be set to a supported language!"))
+
+        target_page_content = page.get_content_obj(target_language, fallback=False)
+
+        for placeholder in source_page_content.get_placeholders():
+            # TODO: Handle missing placeholder
+            target = target_page_content.get_placeholders().get(slot=placeholder.slot)
+            plugins = placeholder.get_plugins_list(source_page_content.language)
+
+            if not target.has_add_plugins_permission(request.user, plugins):
+                return HttpResponseForbidden(_("You do not have permission to copy these plugins."))
+            copy_plugins_to_placeholder(plugins, target, language=target_language)
+        return HttpResponse("ok")
+
+    @transaction.atomic
+    def delete_view(self, request, object_id, extra_context=None):
+        page_content = self.get_object(request, object_id=object_id)
+        page = page_content.page
+        language = page_content.language
+        page_url = page.urls.get(language=page_content.language)
+        request_language = get_site_language_from_request(request, site_id=page.site_id)
+
+        if not self.has_delete_translation_permission(request, language, page):
+            return HttpResponseForbidden(_("You do not have permission to delete this page"))
+
+        if page is None:
+            raise self._get_404_exception(object_id)
+
+        if not len(list(page.get_languages())) > 1:
+            return HttpResponseBadRequest('There only exists one translation for this page')
+
+        titleopts = PageContent._meta
+        app_label = titleopts.app_label
+        placeholders = Placeholder.objects.get_for_obj(page_content)
+        saved_plugins = CMSPlugin.objects.filter(
+            placeholder__in=placeholders,
+            language=language,
+        )
+        to_delete_urls, __, perms_needed_url = get_deleted_objects(
+            [page_url],
+            request=request,
+            admin_site=self.admin_site,
+        )[:3]
+        to_delete_translations, __, perms_needed_translation = get_deleted_objects(
+            [page_content],
+            request=request,
+            admin_site=self.admin_site,
+        )[:3]
+        to_delete_plugins, __, perms_needed_plugins = get_deleted_objects(
+            saved_plugins,
+            request=request,
+            admin_site=self.admin_site,
+        )[:3]
+
+        to_delete_objects = [to_delete_urls, to_delete_plugins, to_delete_translations]
+        perms_needed = set(
+            list(perms_needed_url) + list(perms_needed_translation) + list(perms_needed_plugins)
+        )
+
+        if request.method == 'POST':
+            if perms_needed:
+                raise PermissionDenied
+
+            operation_token = send_pre_page_operation(
+                request=request,
+                operation=operations.DELETE_PAGE_TRANSLATION,
+                obj=page,
+                translation=page_content,
+                sender=self.model
+            )
+
+            message = _('Title and plugins with language %(language)s was deleted') % {
+                'language': force_str(get_language_object(language)['name'])
+            }
+            messages.success(request, message)
+            if language in page.admin_content_cache:
+                del page.admin_content_cache[language]
+            if language in page.page_content_cache:
+                del page.page_content_cache[language]
+
+            page_url.delete()
+            page_content.delete()
+            for p in saved_plugins:
+                p.delete()
+
+            send_post_page_operation(
+                request=request,
+                operation=operations.DELETE_PAGE_TRANSLATION,
+                token=operation_token,
+                obj=page,
+                translation=page_content,
+                sender=self.model,
+            )
+
+            if not self.has_change_permission(request, None):
+                return HttpResponseRedirect(admin_reverse('index'))
+
+            redirect_to = self.get_admin_url('changelist')
+            redirect_to += f'?language={request_language}'
+            return HttpResponseRedirect(redirect_to)
+
+        context = {
+            "title": _("Are you sure?"),
+            "object_name": force_str(titleopts.verbose_name),
+            "object": page_content,
+            "deleted_objects": to_delete_objects,
+            "perms_lacking": perms_needed,
+            "opts": self.opts,
+            "root_path": admin_reverse('index'),
+            "app_label": app_label,
+        }
+        context.update(extra_context or {})
+        request.current_app = self.admin_site.name
+        return render(request, self.delete_confirmation_template or [
+            f"admin/{app_label}/{titleopts.object_name.lower()}/delete_confirmation.html",
+            "admin/%s/delete_confirmation.html" % app_label,
+            "admin/delete_confirmation.html"
+        ], context)
+
+    @require_POST
+    def change_innavigation(self, request, object_id):
+        """
+        Switch the in_navigation of a page
+        """
+        page_content = self.get_object(request, object_id=object_id)
+
+        if not self.has_change_permission(request, obj=page_content):
+            if self.has_change_permission(request):
+                # General (permission) problem
+                message = "You do not have permission to change a page's navigation status"
+            else:
+                # Only this page? Can be permissions or versioning, or ...
+                message = "You cannot change this page's navigation status"
+            return HttpResponseForbidden(_(message))
+
+        if page_content is None:
+            raise self._get_404_exception(object_id)
+
+        page_content.toggle_in_navigation()
+        # 204 -> request was successful but no response returned.
+        return HttpResponse(status=204)
+
+    def get_tree(self, request):
+        """
+        Get html for the descendants (only) of given page or if no page_id is
+        provided, all the root nodes.
+
+        Used for lazy loading pages in cms.pagetree.js
+        """
+        site = get_site(request)
+        pages = Page.objects.on_site(site).order_by('path')
+        node_id = re.sub(r'[^\d]', '', request.GET.get('nodeId', '')) or None
+        open_page_ids = [int(id) for id in request.GET.getlist('openNodes[]') if id.isdigit()]
+        if node_id:
+            page = get_object_or_404(pages, id=node_id)
+            pages = page.get_descendant_pages().filter(Q(id__in=open_page_ids) | Q(parent__in=open_page_ids))
+        else:
+            page = None
+            pages = pages.filter(
+                # get all root pages or children which were previously open or children of the open descendants
+                Q(depth=1) | Q(depth=2, id__in=open_page_ids) | Q(parent__in=open_page_ids)
+            )
+        pages = pages.prefetch_related(
+            Prefetch(
+                'pagecontent_set',
+                to_attr='filtered_translations',
+                queryset=PageContent.admin_manager.get_queryset().latest_content(),
+            ),
+        )
+        rows = self.get_tree_rows(
+            request,
+            pages=pages,
+            language=get_site_language_from_request(request, site_id=site.pk),
+            depth=(page.depth + 1 if page else 1),
+            follow_descendants=True,
+        )
+        return HttpResponse(''.join(rows))
+
+    def get_tree_rows(self, request, pages, language, depth=1,
+                      follow_descendants=True):
+        """
+        Used for rendering the page tree, inserts into context everything what
+        we need for single item
+        """
+        user = request.user
+        site = get_site(request)
+        permissions_on = get_cms_setting('PERMISSION')
+        template = get_template(self.page_tree_row_template)
+        is_popup = (IS_POPUP_VAR in request.POST or IS_POPUP_VAR in request.GET)
+        languages = get_language_list(site.pk)
+        user_can_add = page_permissions.user_can_add_subpage
+        user_can_change = page_permissions.user_can_change_page
+        user_can_change_advanced = page_permissions.user_can_change_page_advanced_settings
+
+        def render_page_row(page):
+            page.admin_content_cache = {trans.language: trans for trans in page.filtered_translations}
+            has_move_page_permission = page_permissions.user_can_move_page(request.user, page, site=site)
+
+            if permissions_on and not has_move_page_permission:
+                # TODO: check if this is really needed
+                metadata = '{"valid_children": False, "draggable": False}'
+            else:
+                metadata = ''
+
+            context = {
+                'admin': self,
+                'opts': self.opts,
+                'site': site,
+                'page': page,
+                'page_content': page.get_admin_content(language),
+                'ancestors': [page for page in page.get_cached_ancestors()],
+                'descendants': [page for page in page.get_cached_descendants()],
+                'request': request,
+                'lang': language,
+                'metadata': metadata,
+                'page_languages': page.get_languages(),
+                'preview_language': language,
+                'follow_descendants': follow_descendants,
+                'site_languages': languages,
+                'is_popup': is_popup,
+                'has_add_page_permission': user_can_add(user, target=page),
+                'has_change_permission': user_can_change(request.user, page, site),
+                'has_change_advanced_settings_permission': user_can_change_advanced(request.user, page, site),
+                'has_move_page_permission': has_move_page_permission,
+            }
+            context['is_concrete'] = context['page_content'].language == language
+            return template.render(context)
+
+        if follow_descendants:
+            root_pages = (page for page in pages if page.depth == depth)
+        else:
+            # When the tree is filtered, it's displayed as a flat structure
+            root_pages = pages
+
+        if depth == 1:
+            for page in root_pages:
+                page._set_hierarchy(list(pages))
+                yield render_page_row(page)
+        else:
+            for page in root_pages:
+                yield render_page_row(page)
+
+    # Indicators in the page tree
+    @property
+    def indicator_descriptions(self):
+        return {
+            "public": _("Public content"),
+            "empty": _("Empty"),
+        }
+
+    @classmethod
+    def get_indicator_menu(cls, request, page_content):
+        menu_template = "admin/cms/page/tree/indicator_menu.html"
+        if not page_content:
+            return menu_template, [
+                (
+                    _("Create Content"),  # Entry
+                    "cms-icon-edit-new",  # Optional icon
+                    admin_reverse('cms_pagecontent_add')
+                    + f'?cms_page={page_content.page.pk}&language={page_content.language}',  # url
+                    None,  # Optional add classes for <a>
+                ),
+            ]
+        return "", []

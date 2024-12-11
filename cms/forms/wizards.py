@@ -1,28 +1,15 @@
-# -*- coding: utf-8 -*-
-
-from __future__ import unicode_literals
-
 from django import forms
-from django.contrib.sites.models import Site
-from django.core.exceptions import PermissionDenied
-from django.utils.encoding import smart_text
-from django.utils.translation import (
-    ugettext_lazy as _,
-    get_language,
-)
+from django.core.exceptions import ValidationError
+from django.db import transaction
+from django.utils.text import slugify
+from django.utils.translation import gettext, gettext_lazy as _
 
-from cms.api import generate_valid_slug
-from cms.constants import PAGE_TYPES_ID
-from cms.exceptions import NoPermissionsException
-from cms.models import Page, Title
+from cms.admin.forms import AddPageForm
 from cms.plugin_pool import plugin_pool
 from cms.utils import permissions
-from cms.utils.page_permissions import (
-    user_can_add_page,
-    user_can_add_subpage,
-)
 from cms.utils.conf import get_cms_setting
-from cms.utils.urlutils import static_with_version
+from cms.utils.page import get_available_slug
+from cms.utils.page_permissions import user_can_add_page, user_can_add_subpage
 
 try:
     # djangocms_text_ckeditor is not guaranteed to be available
@@ -32,91 +19,39 @@ except ImportError:
     text_widget = forms.Textarea
 
 
-class PageTypeSelect(forms.widgets.Select):
-    """
-    Special widget for the page_type choice-field. This simply adds some JS for
-    hiding/showing the content field based on the selection of this select.
-    """
+class CreateCMSPageForm(AddPageForm):
+    sub_page_form = False
+
+    # Field overrides
+    menu_title = None
+    page_title = None
+    meta_description = None
+
+    content = forms.CharField(
+        label=_('Content'), widget=text_widget, required=False,
+        help_text=_("Optional. If supplied, will be automatically added "
+                    "within a new text plugin.")
+    )
+
     class Media:
         js = (
+            # This simply adds some JS for
+            # hiding/showing the content field based on the selection of this select.
             'cms/js/widgets/wizard.pagetypeselect.js',
         )
 
-class SlugWidget(forms.widgets.TextInput):
-    """
-    Special widget for the slug field that requires Title field to be there.
-    Adds the js for the slugifying.
-    """
-    class Media:
-        js = (
-            'admin/js/urlify.js',
-            static_with_version('cms/js/dist/bundle.forms.slugwidget.min.js'),
-        )
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['title'].help_text = _("Provide a title for the new page.")
+        self.fields['slug'].required = False
+        self.fields['slug'].help_text = _("Leave empty for automatic slug, or override as required.")
 
-class BaseCMSPageForm(forms.Form):
-    page = None
-
-    title = forms.CharField(
-        label=_(u'Title'), max_length=255,
-        help_text=_(u"Provide a title for the new page."))
-    slug = forms.SlugField(
-        label=_(u'Slug'), max_length=255, required=False,
-        help_text=_(u"Leave empty for automatic slug, or override as required."),
-        widget=SlugWidget()
-    )
-    page_type = forms.ChoiceField(
-        label=_(u'Page type'), required=False, widget=PageTypeSelect())
-    content = forms.CharField(
-        label=_(u'Content'), widget=text_widget, required=False,
-        help_text=_(u"Optional. If supplied, will be automatically added "
-                    u"within a new text plugin."))
-
-    def __init__(self, instance=None, *args, **kwargs):
-        # Expect instance argument here, as we have to accept some of the
-        # ModelForm __init__() arguments here for the ModelFormMixin cbv
-        self.instance = instance
-        super(BaseCMSPageForm, self).__init__(*args, **kwargs)
-
-        if self.page:
-            site = self.page.site_id
-        else:
-            site = Site.objects.get_current()
-
-        # Either populate, or remove the page_type field
-        if 'page_type' in self.fields:
-            root = Page.objects.filter(publisher_is_draft=True,
-                                       reverse_id=PAGE_TYPES_ID,
-                                       site=site).first()
-            if root:
-                page_types = root.get_descendants()
-            else:
-                page_types = Page.objects.none()
-
-            if root and page_types:
-                # Set the choicefield's choices to the various page_types
-                language = get_language()
-                type_ids = page_types.values_list('pk', flat=True)
-                titles = Title.objects.filter(page__in=type_ids,
-                                              language=language)
-                choices = [('', '---------')]
-                for title in titles:
-                    choices.append((title.page_id, title.title))
-                self.fields['page_type'].choices = choices
-            else:
-                # There are no page_types, so don't bother the user with an
-                # empty choice field.
-                del self.fields['page_type']
-
-
-class CreateCMSPageForm(BaseCMSPageForm):
-
-    @staticmethod
-    def get_placeholder(page, slot=None):
+    def get_placeholder(self, page_content, slot=None):
         """
         Returns the named placeholder or, if no «slot» provided, the first
         editable, non-static placeholder or None.
         """
-        placeholders = page.get_placeholders()
+        placeholders = page_content.get_placeholders()
 
         if slot:
             placeholders = placeholders.filter(slot=slot)
@@ -124,8 +59,11 @@ class CreateCMSPageForm(BaseCMSPageForm):
         for ph in placeholders:
             if not ph.is_static and ph.is_editable:
                 return ph
-
         return None
+
+    @property
+    def _language(self):
+        return self.language_code
 
     def clean(self):
         """
@@ -133,126 +71,93 @@ class CreateCMSPageForm(BaseCMSPageForm):
         `title` produces a valid slug.
         :return:
         """
-        cleaned_data = super(CreateCMSPageForm, self).clean()
+        data = self.cleaned_data
 
-        slug = cleaned_data.get("slug")
-        sub_page = cleaned_data.get("sub_page")
-        title = cleaned_data.get("title")
+        if self._errors:
+            return data
 
-        if self.page:
-            if sub_page:
-                parent = self.page
-            else:
-                parent = self.page.parent
-        else:
-            parent = None
-
-        if slug:
-            starting_point = slug
-        elif title:
-            starting_point = title
-        else:
-            starting_point = _("page")
-        slug = generate_valid_slug(starting_point, parent, self.language_code)
+        slug = slugify(data.get('slug')) or slugify(data['title'])
         if not slug:
-            raise forms.ValidationError("Please provide a valid slug.")
-        cleaned_data["slug"] = slug
-        return cleaned_data
+            data["slug"] = ""
+            forms.ValidationError({
+                "slug": [_("Cannot automatically create slug. Please provide one manually.")],
+            })
 
-    def save(self, **kwargs):
-        from cms.api import create_page, add_plugin
+        parent_page = data.get('parent_page')
 
+        if parent_page:
+            base = parent_page.get_path(self._language)
+            path = f'{base}/{slug}' if base else slug
+        else:
+            base = ''
+            path = slug
+
+        data['slug'] = get_available_slug(self._site, path, self._language, suffix=None)
+        data['path'] = '{}/{}'.format(base, data['slug']) if base else data['slug']
+
+        if not data['slug']:
+            raise forms.ValidationError(_("Please provide a valid slug."))
+        return data
+
+    def clean_parent_page(self):
         # Check to see if this user has permissions to make this page. We've
         # already checked this when producing a list of wizard entries, but this
         # is to prevent people from possible form-hacking.
-
-        if 'sub_page' in self.cleaned_data:
-            sub_page = self.cleaned_data['sub_page']
-        else:
-            sub_page = False
-
-        if self.page and sub_page:
+        if self._page and self.sub_page_form:
             # User is adding a page which will be a direct
             # child of the current page.
-            position = 'last-child'
-            parent = self.page
-            has_perm = user_can_add_subpage(self.user, target=parent)
-        elif self.page and self.page.parent_id:
+            parent_page = self._page
+        elif self._page and self._page.parent:
             # User is adding a page which will be a right
             # sibling to the current page.
-            position = 'last-child'
-            parent = self.page.parent
-            has_perm = user_can_add_subpage(self.user, target=parent)
+            parent_page = self._page.parent
         else:
-            parent = None
-            position = 'last-child'
-            has_perm = user_can_add_page(self.user)
+            parent_page = None
+
+        if parent_page:
+            has_perm = user_can_add_subpage(self._user, target=parent_page)
+        else:
+            has_perm = user_can_add_page(self._user)
 
         if not has_perm:
-            raise NoPermissionsException(
-                _(u"User does not have permission to add page."))
+            message = gettext('You don\'t have the permissions required to add a page.')
+            raise ValidationError(message)
+        return parent_page if parent_page else None
 
-        page = create_page(
-            title=self.cleaned_data['title'],
-            slug=self.cleaned_data['slug'],
-            template=get_cms_setting('PAGE_WIZARD_DEFAULT_TEMPLATE'),
-            language=self.language_code,
-            created_by=smart_text(self.user),
-            parent=parent,
-            position=position,
-            in_navigation=True,
-            published=False
-        )
+    def get_template(self):
+        return get_cms_setting('PAGE_WIZARD_DEFAULT_TEMPLATE')
 
-        page_type = self.cleaned_data.get("page_type")
-        if page_type:
-            copy_target = Page.objects.filter(pk=page_type).first()
-        else:
-            copy_target = None
+    @transaction.atomic
+    def save(self, **kwargs):
+        from cms.api import add_plugin
 
-        if copy_target:
-            # If the user selected a page type, copy that.
-            if not copy_target.has_view_permission(self.user):
-                raise PermissionDenied()
+        new_translation = super().save(**kwargs)
+        new_page = new_translation.page
 
-            # Copy page attributes
-            copy_target._copy_attributes(page, clean=True)
-            page.save()
+        if self.cleaned_data.get("page_type"):
+            return new_page
 
-            # Copy contents (for each language)
-            for lang in copy_target.get_languages():
-                copy_target._copy_contents(page, lang)
+        # If the user provided content, then use that instead.
+        content = self.cleaned_data.get('content')
+        plugin_type = get_cms_setting('PAGE_WIZARD_CONTENT_PLUGIN')
+        plugin_body = get_cms_setting('PAGE_WIZARD_CONTENT_PLUGIN_BODY')
+        slot = get_cms_setting('PAGE_WIZARD_CONTENT_PLACEHOLDER')
 
-            # Copy extensions
-            from cms.extensions import extension_pool
-            extension_pool.copy_extensions(copy_target, page)
-
-        else:
-            # If the user provided content, then use that instead.
-            content = self.cleaned_data.get('content')
-            plugin_type = get_cms_setting('PAGE_WIZARD_CONTENT_PLUGIN')
-            plugin_body = get_cms_setting('PAGE_WIZARD_CONTENT_PLUGIN_BODY')
-            slot = get_cms_setting('PAGE_WIZARD_CONTENT_PLACEHOLDER')
-
-            if plugin_type in plugin_pool.plugins and plugin_body:
-                if content and permissions.has_plugin_permission(
-                        self.user, plugin_type, "add"):
-                    placeholder = self.get_placeholder(page, slot=slot)
-                    if placeholder:
-                        opts = {
-                            'placeholder': placeholder,
-                            'plugin_type': plugin_type,
-                            'language': self.language_code,
-                            plugin_body: content,
-                        }
-                        add_plugin(**opts)
-
-        # is it home? publish it right away
-        if not self.page and page.is_home:
-            page.publish(self.language_code)
-        return page
+        if plugin_type in plugin_pool.plugins and plugin_body:
+            if content and permissions.has_plugin_permission(
+                    self._user, plugin_type, "add"):
+                placeholder = self.get_placeholder(new_translation, slot=slot)
+                if placeholder:
+                    opts = {
+                        'placeholder': placeholder,
+                        'plugin_type': plugin_type,
+                        'language': self.language_code,
+                        plugin_body: content,
+                    }
+                    add_plugin(**opts)
+        return new_page
 
 
 class CreateCMSSubPageForm(CreateCMSPageForm):
 
-    sub_page = forms.BooleanField(initial=True, widget=forms.HiddenInput)
+    sub_page_form = True

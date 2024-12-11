@@ -1,164 +1,209 @@
-# -*- coding: utf-8 -*-
 from classytags.arguments import Argument
 from classytags.core import Options, Tag
-from classytags.helpers import InclusionTag
-from cms.constants import PUBLISHER_STATE_PENDING
-from cms.toolbar.utils import get_plugin_toolbar_js
-from cms.utils.admin import render_admin_rows
-from sekizai.helpers import get_varname
-
+from classytags.helpers import AsTag, InclusionTag
 from django import template
 from django.conf import settings
+from django.contrib import admin
+from django.contrib.admin.views.main import ERROR_FLAG
+from django.template.loader import render_to_string
 from django.utils.encoding import force_str
+from django.utils.html import format_html
 from django.utils.safestring import mark_safe
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import get_language, gettext_lazy as _
 
+from cms.models import Page
+from cms.models.contentmodels import PageContent
+from cms.toolbar.utils import get_object_preview_url
+from cms.utils import get_language_from_request
+from cms.utils.urlutils import admin_reverse
 
 register = template.Library()
 
-CMS_ADMIN_ICON_BASE = "%sadmin/img/" % settings.STATIC_URL
+CMS_ADMIN_ICON_BASE = f"{settings.STATIC_URL}admin/img/"
+
+
+class GetAdminUrlForLanguage(AsTag):
+    """Classy tag that returns the url for editing PageContent in the admin."""
+    name = "get_admin_url_for_language"
+
+    options = Options(
+        Argument('page'),
+        Argument('language'),
+        'as',
+        Argument('varname', required=False, resolve=False)
+    )
+
+    def get_value(self, context, page, language):
+        if language in page.get_languages():
+            page_content = page.get_admin_content(language)
+            if page_content:
+                return admin_reverse('cms_pagecontent_change', args=[page_content.pk])
+        admin_url = admin_reverse('cms_pagecontent_add')
+        admin_url += f'?cms_page={page.pk}&language={language}'
+        return admin_url
+
+
+register.tag(GetAdminUrlForLanguage.name, GetAdminUrlForLanguage)
+
+
+class GetPreviewUrl(AsTag):
+    """Classy tag that returns the url for editing PageContent in the admin."""
+    name = "get_preview_url"
+    page_content_type = None
+
+    options = Options(
+        Argument('page_content'),
+        'as',
+        Argument('varname', required=False, resolve=False)
+    )
+
+    def get_value(self, context, page_content):
+        if isinstance(page_content, Page):
+            # Advanced settings wants a preview for a Page object.
+            page_content = page_content.get_content_obj(
+                language=get_language_from_request(context["request"])
+            )
+        if not page_content:
+            return ""
+        return get_object_preview_url(page_content, language=page_content.language)
+
+
+register.tag(GetPreviewUrl.name, GetPreviewUrl)
 
 
 @register.simple_tag(takes_context=True)
-def show_admin_menu_for_pages(context, pages):
+def show_admin_menu_for_pages(context, descendants, depth=1):
+    admin = context['admin']
     request = context['request']
 
-    if 'cl' in context:
-        filtered = context['cl'].is_filtered or context['cl'].query
+    if 'tree' in context:
+        filtered = context['tree']['is_filtered']
     else:
         filtered = False
 
-    content = render_admin_rows(
+    rows = admin.get_tree_rows(
         request,
-        pages=pages,
-        site=context['cms_current_site'],
-        filtered=filtered,
+        pages=descendants,
         language=context['preview_language'],
+        depth=depth,
+        follow_descendants=not bool(filtered),
     )
-    return mark_safe(content)
+    return mark_safe(''.join(rows))
+
+
+@register.simple_tag(takes_context=False)
+def get_page_display_name(cms_page):
+    language = get_language()
+
+    page_content = cms_page.get_admin_content(language, fallback="force")
+    title = page_content.title or page_content.page_title or page_content.menu_title
+    if not title:
+        title = cms_page.get_slug(language) or _("Empty")
+    return title if page_content.language == language else mark_safe(f"<em>{title} ({page_content.language})</em>")
 
 
 class TreePublishRow(Tag):
+    """New template tag that renders a potential menu to be offered with the
+    dirty indicators. The core will not display a menu."""
     name = "tree_publish_row"
     options = Options(
         Argument('page'),
         Argument('language')
     )
 
-    def render_tag(self, context, page, language):
-        if page.is_published(language) and page.publisher_public_id and page.publisher_public.is_published(language):
-            if page.is_dirty(language):
-                cls = "cms-pagetree-node-state cms-pagetree-node-state-dirty dirty"
-                text = _("unpublished changes")
-            else:
-                cls = "cms-pagetree-node-state cms-pagetree-node-state-published published"
-                text = _("published")
-        else:
-            page_languages = page.get_languages()
+    def get_indicator(self, page_content):
+        indicator = page_content.content_indicator()
+        page_content_admin_class = admin.site._registry[PageContent]
+        css_classes = f"cms-pagetree-node-state cms-pagetree-node-state-{indicator} {indicator}"
+        return css_classes, page_content_admin_class.indicator_descriptions.get(indicator, _("Unknown"))
 
-            if language in page_languages:
-                public_pending = page.publisher_public_id and page.publisher_public.get_publisher_state(
-                        language) == PUBLISHER_STATE_PENDING
-                if public_pending or page.get_publisher_state(
-                        language) == PUBLISHER_STATE_PENDING:
-                    cls = "cms-pagetree-node-state cms-pagetree-node-state-unpublished-parent unpublishedparent"
-                    text = _("unpublished parent")
-                else:
-                    cls = "cms-pagetree-node-state cms-pagetree-node-state-unpublished unpublished"
-                    text = _("unpublished")
-            else:
-                cls = "cms-pagetree-node-state cms-pagetree-node-state-empty empty"
-                text = _("no content")
+    def get_indicator_legend(self, descriptions):
+        return (
+            (f"cms-pagetree-node-state cms-pagetree-node-state-{state}", description)
+            for state, description in descriptions.items()
+        )
+
+    def render_tag(self, context, page, language):
+        if page is None:  # Retrieve all for legend
+            page_content_admin_class = admin.site._registry[PageContent]
+            context["indicator_legend_items"] = self.get_indicator_legend(
+                page_content_admin_class.indicator_descriptions
+            )
+            return render_to_string("admin/cms/page/tree/indicator_legend.html", context.flatten())
+
+        page_content = page.get_admin_content(language)
+        cls, text = self.get_indicator(page_content)
         return mark_safe(
             '<span class="cms-hover-tooltip cms-hover-tooltip-left cms-hover-tooltip-delay %s" '
             'data-cms-tooltip="%s"></span>' % (cls, force_str(text)))
 
 
-register.tag(TreePublishRow)
+register.tag(TreePublishRow.name, TreePublishRow)
 
 
-@register.filter
-def is_published(page, language):
-    if page.is_published(language) and page.publisher_public_id and page.publisher_public.is_published(language):
-        return True
-    else:
-        page_languages = page.get_languages()
-
-        if language in page_languages and page.publisher_public_id and page.publisher_public.get_publisher_state(
-                language) == PUBLISHER_STATE_PENDING:
-            return True
-        return False
-
-
-@register.filter
-def is_dirty(page, language):
-    return page.is_dirty(language)
-
-
-@register.filter
-def all_ancestors_are_published(page, language):
-    """
-    Returns False if any of the ancestors of page (and language) are
-    unpublished, otherwise True.
-    """
-    page = page.parent
-    while page:
-        if not page.is_published(language):
-            return False
-        page = page.parent
-    return True
-
-
-class CleanAdminListFilter(InclusionTag):
-    """
-    used in admin to display only these users that have actually edited a page
-    and not everybody
-    """
-    name = 'clean_admin_list_filter'
-    template = 'admin/cms/page/tree/filter.html'
-
+@register.tag
+class TreePublishRowMenu(AsTag):
+    """New template tag that renders a potential menu to be offered with the
+    dirty indicators. The core will only display a menu for EmptyContent to allow
+    to create a new PageContent."""
+    name = "tree_publish_row_menu"
     options = Options(
-        Argument('cl'),
-        Argument('spec'),
+        Argument('page'),
+        Argument('language'),
+        'as',
+        Argument('varname', required=False, resolve=False)
     )
 
-    def get_context(self, context, cl, spec):
-        choices = sorted(list(spec.choices(cl)), key=lambda k: k['query_string'])
-        query_string = None
-        unique_choices = []
-        for choice in choices:
-            if choice['query_string'] != query_string:
-                unique_choices.append(choice)
-                query_string = choice['query_string']
-        return {'title': spec.title, 'choices': unique_choices}
+    def get_value(self, context, page, language):
+        page_content = page.get_admin_content(language)
+        if context.get("has_change_permission", False):
+            page_content_admin_class = admin.site._registry[PageContent]
+            template, publish_menu_items = page_content_admin_class.get_indicator_menu(
+                context["request"], page_content
+            )
+            if template:
+                context["indicator_menu_items"] = publish_menu_items
+                return render_to_string(template, context.flatten())
+        return ''
 
 
-register.tag(CleanAdminListFilter)
+register.tag(TreePublishRowMenu.name, TreePublishRowMenu)
+
+
+@register.inclusion_tag('admin/cms/page/tree/filter.html')
+def render_filter_field(request, field):
+    params = request.GET.copy()
+
+    if ERROR_FLAG in params:
+        del params['ERROR_FLAG']
+
+    lookup_value = params.pop(field.html_name, [''])[-1]
+
+    def choices():
+        for value, label in field.field.choices:
+            queries = params.copy()
+
+            if value:
+                queries[field.html_name] = value
+            yield {
+                'query_string': '?%s' % queries.urlencode(),
+                'selected': lookup_value == value,
+                'display': label,
+            }
+    return {'field': field, 'choices': choices()}
 
 
 @register.filter
 def boolean_icon(value):
-    BOOLEAN_MAPPING = {True: 'yes', False: 'no', None: 'unknown'}
-    return mark_safe(
-        u'<img src="%sicon-%s.gif" alt="%s" />' % (CMS_ADMIN_ICON_BASE, BOOLEAN_MAPPING.get(value, 'unknown'), value))
+    mapped_icon = {True: 'yes', False: 'no'}.get(value, 'unknown')
+    return format_html(
+        '<img src="{0}icon-{1}.svg" alt="{1}" />',
+        CMS_ADMIN_ICON_BASE,
+        mapped_icon,
+    )
 
 
-@register.filter
-def preview_link(page, language):
-    if settings.USE_I18N:
-
-        # Which one of page.get_slug() and page.get_path() is the right
-        # one to use in this block? They both seem to return the same thing.
-        try:
-            # attempt to retrieve the localized path/slug and return
-            return page.get_absolute_url(language, fallback=False)
-        except:
-            # no localized path/slug. therefore nothing to preview. stay on the same page.
-            # perhaps the user should be somehow notified for this.
-            return ''
-    return page.get_absolute_url(language)
-
-
+@register.tag(name="page_submit_row")
 class PageSubmitRow(InclusionTag):
     name = 'page_submit_row'
     template = 'admin/cms/page/submit_row.html'
@@ -168,38 +213,21 @@ class PageSubmitRow(InclusionTag):
         change = context['change']
         is_popup = context['is_popup']
         save_as = context['save_as']
-        basic_info = context.get('basic_info', False)
-        advanced_settings = context.get('advanced_settings', False)
-        change_advanced_settings = context.get('can_change_advanced_settings', False)
         language = context.get('language', '')
         filled_languages = context.get('filled_languages', [])
-
-        show_buttons = language in filled_languages
-
-        if show_buttons:
-            show_buttons = (basic_info or advanced_settings) and change_advanced_settings
-
         context = {
-            # TODO check this (old code: opts.get_ordered_objects() )
-            'onclick_attrib': (opts and change
-                               and 'onclick="submitOrderForm();"' or ''),
             'show_delete_link': False,
             'show_save_as_new': not is_popup and change and save_as,
             'show_save_and_add_another': False,
             'show_save_and_continue': not is_popup and context['has_change_permission'],
             'is_popup': is_popup,
-            'basic_info_active': basic_info,
-            'advanced_settings_active': advanced_settings,
-            'show_buttons': show_buttons,
-            'show_save': True,
+            'show_save': context.get("can_change", True),
             'language': language,
             'language_is_filled': language in filled_languages,
-            'object_id': context.get('object_id', None)
+            'object_id': context.get('object_id', None),
+            'opts': opts,
         }
         return context
-
-
-register.tag(PageSubmitRow)
 
 
 def in_filtered(seq1, seq2):
@@ -217,46 +245,12 @@ def admin_static_url():
     return getattr(settings, 'ADMIN_MEDIA_PREFIX', None) or ''.join([settings.STATIC_URL, 'admin/'])
 
 
+@register.tag(name="cms_admin_icon_base")
 class CMSAdminIconBase(Tag):
     name = 'cms_admin_icon_base'
 
     def render_tag(self, context):
         return CMS_ADMIN_ICON_BASE
-
-
-register.tag(CMSAdminIconBase)
-
-
-@register.simple_tag(takes_context=True)
-def render_plugin_toolbar_config(context, plugin):
-    content_renderer = context['cms_content_renderer']
-
-    instance, plugin_class = plugin.get_plugin_instance()
-
-    if not instance:
-        return ''
-
-    with context.push():
-        content = content_renderer.render_editable_plugin(
-            instance,
-            context,
-            plugin_class,
-        )
-        # render_editable_plugin will populate the plugin
-        # parents and children cache.
-        placeholder_cache = content_renderer.get_rendered_plugins_cache(instance.placeholder)
-        toolbar_js = get_plugin_toolbar_js(
-            instance,
-            request_language=content_renderer.request_language,
-            children=placeholder_cache['plugin_children'][instance.plugin_type],
-            parents=placeholder_cache['plugin_parents'][instance.plugin_type],
-        )
-        varname = get_varname()
-        toolbar_js = '<script>{}</script>'.format(toolbar_js)
-        # Add the toolbar javascript for this plugin to the
-        # sekizai "js" namespace.
-        context[varname]['js'].append(toolbar_js)
-    return mark_safe(content)
 
 
 @register.inclusion_tag('admin/cms/page/plugin/submit_line.html', takes_context=True)
@@ -270,9 +264,11 @@ def submit_row_plugin(context):
     save_as = context['save_as']
     ctx = {
         'opts': opts,
-        'show_delete_link': context.get('has_delete_permission', False) and change and context.get('show_delete', True),
+        'show_delete_link': context.get(
+            'has_delete_permission', False) and change and context.get('show_delete', True),
         'show_save_as_new': not is_popup and change and save_as,
-        'show_save_and_add_another': context['has_add_permission'] and not is_popup and (not save_as or context['add']),
+        'show_save_and_add_another': context['has_add_permission'] and not is_popup and (
+            not save_as or context['add']),
         'show_save_and_continue': not is_popup and context['has_change_permission'],
         'is_popup': is_popup,
         'show_save': True,

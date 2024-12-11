@@ -1,23 +1,23 @@
-# -*- coding: utf-8 -*-
 from copy import deepcopy
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.test import TestCase
+from djangocms_text_ckeditor.cms_plugins import TextPlugin
 
 from cms.api import add_plugin
-from cms.models.pluginmodel import CMSPlugin
 from cms.models.placeholdermodel import Placeholder
-from cms.test_utils.project.pluginapp.plugins.manytomany_rel.models import ArticlePluginModel
+from cms.models.pluginmodel import CMSPlugin
 from cms.test_utils.project.extensionapp.models import MyPageExtension
-from cms.utils.check import FileOutputWrapper, check, FileSectionWrapper
-
-from djangocms_text_ckeditor.cms_plugins import TextPlugin
+from cms.test_utils.project.pluginapp.plugins.manytomany_rel.models import (
+    ArticlePluginModel,
+)
+from cms.utils.check import FileOutputWrapper, FileSectionWrapper, check
 
 
 class TestOutput(FileOutputWrapper):
     def __init__(self):
-        super(TestOutput, self).__init__(None, None)
+        super().__init__(None, None)
         self.section_wrapper = TestSectionOutput
 
     def write(self, message):
@@ -35,7 +35,7 @@ class TestSectionOutput(FileSectionWrapper):
         pass
 
 
-class CheckAssertMixin(object):
+class CheckAssertMixin:
     def assertCheck(self, successful, **assertions):
         """
         asserts that checks are successful or not
@@ -45,7 +45,9 @@ class CheckAssertMixin(object):
         check(output)
         self.assertEqual(output.successful, successful)
         for key, value in assertions.items():
-            self.assertEqual(getattr(output, key), value, "%s %s expected, got %s" % (value, key, getattr(output, key)))
+            self.assertEqual(
+                getattr(output, key), value, f"{value} {key} expected, got {getattr(output, key)}"
+            )
 
 
 class CheckTests(CheckAssertMixin, TestCase):
@@ -59,15 +61,30 @@ class CheckTests(CheckAssertMixin, TestCase):
         with self.settings(INSTALLED_APPS=apps):
             self.assertCheck(False, errors=1)
 
+    def test_no_django_i18n_context_processor(self):
+        override = {'TEMPLATES': deepcopy(settings.TEMPLATES)}
+        override['TEMPLATES'][0]['OPTIONS']['context_processors'] = [
+            'sekizai.context_processors.sekizai',
+            'cms.context_processors.cms_settings'
+        ]
+        with self.settings(**override):
+            self.assertCheck(False, errors=1)
+
     def test_no_cms_settings_context_processor(self):
         override = {'TEMPLATES': deepcopy(settings.TEMPLATES)}
-        override['TEMPLATES'][0]['OPTIONS']['context_processors'] = ['sekizai.context_processors.sekizai']
+        override['TEMPLATES'][0]['OPTIONS']['context_processors'] = [
+            'sekizai.context_processors.sekizai',
+            'django.template.context_processors.i18n',
+        ]
         with self.settings(**override):
             self.assertCheck(False, errors=1)
 
     def test_no_sekizai_template_context_processor(self):
         override = {'TEMPLATES': deepcopy(settings.TEMPLATES)}
-        override['TEMPLATES'][0]['OPTIONS']['context_processors'] = ['cms.context_processors.cms_settings']
+        override['TEMPLATES'][0]['OPTIONS']['context_processors'] = [
+            'cms.context_processors.cms_settings',
+            'django.template.context_processors.i18n',
+        ]
         with self.settings(**override):
             self.assertCheck(False, errors=2)
 
@@ -76,7 +93,7 @@ class CheckTests(CheckAssertMixin, TestCase):
             self.assertRaises(ImproperlyConfigured, self.assertCheck, True, warnings=1, errors=0)
 
     def test_middlewares(self):
-        MIDDLEWARE_CLASSES = [
+        MIDDLEWARE = [
             'django.middleware.cache.UpdateCacheMiddleware',
             'django.middleware.http.ConditionalGetMiddleware',
             'django.contrib.sessions.middleware.SessionMiddleware',
@@ -90,15 +107,7 @@ class CheckTests(CheckAssertMixin, TestCase):
             'django.middleware.cache.FetchFromCacheMiddleware',
         ]
         self.assertCheck(True, warnings=0, errors=0)
-        if getattr(settings, 'MIDDLEWARE', None):
-            override = {
-                'MIDDLEWARE': MIDDLEWARE_CLASSES
-            }
-        else:
-            override = {
-                'MIDDLEWARE_CLASSES': MIDDLEWARE_CLASSES
-            }
-        with self.settings(**override):
+        with self.settings(MIDDLEWARE=MIDDLEWARE):
             self.assertCheck(False, warnings=0, errors=2)
 
     def test_copy_relations_fk_check(self):
@@ -126,11 +135,24 @@ class CheckTests(CheckAssertMixin, TestCase):
         with self.settings(SITE_ID='broken'):
             self.assertCheck(False, warnings=0, errors=1)
 
+    def test_cmsapps_check(self):
+        from cms.app_base import CMSApp
+        from cms.apphook_pool import apphook_pool
+
+        class AppWithoutName(CMSApp):
+            def get_urls(self, page=None, language=None, **kwargs):
+                return ["sampleapp.urls"]
+
+        app = apphook_pool.register(AppWithoutName)
+
+        self.assertCheck(True, warnings=1, errors=0)
+        apphook_pool.apps.pop(app.__name__)
+
 
 class CheckWithDatabaseTests(CheckAssertMixin, TestCase):
 
     def test_check_plugin_instances(self):
-        self.assertCheck(True, warnings=0, errors=0 )
+        self.assertCheck(True, warnings=0, errors=0)
 
         placeholder = Placeholder.objects.create(slot="test")
         add_plugin(placeholder, TextPlugin, "en", body="en body")

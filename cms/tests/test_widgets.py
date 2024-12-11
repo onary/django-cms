@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from cms.api import create_page
 from cms.forms.widgets import PageSelectWidget, PageSmartLinkWidget
 from cms.test_utils.testcases import CMSTestCase
@@ -20,6 +19,6 @@ class WidgetTestCases(CMSTestCase):
     def test_pagesmartwidget(self):
         create_page("Test page", "nav_playground.html", "en")
         create_page("Test page2", "nav_playground.html", "en")
-        widget = PageSmartLinkWidget(ajax_view='admin:cms_page_get_published_pagelist')
+        widget = PageSmartLinkWidget(ajax_view='admin:cms_page_get_list')
         widget.language = 'en'
         self.assertIn('page', widget.render("page", ''))

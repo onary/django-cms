@@ -1,8 +1,3 @@
-# -*- coding: utf-8 -*-
-from __future__ import absolute_import, print_function, unicode_literals
-
-from six.moves import input
-
 from cms.management.commands.subcommands.list import plugin_report
 
 from .base import SubcommandsCommand
@@ -49,10 +44,18 @@ Type 'yes' to continue, or 'no' to cancel: """ % (len(uninstalled_instances), le
             self.stdout.write('... deleting any instances of uninstalled plugins and empty plugin instances\n')
 
             for instance in uninstalled_instances:
-                instance.delete()
+                if instance.placeholder:
+                    instance.placeholder.delete_plugin(instance)
+                else:
+                    instance.delete()
 
             for instance in unsaved_instances:
-                instance.delete()
+                if instance.placeholder:
+                    instance.placeholder.delete_plugin(instance)
+                else:
+                    instance.delete()
 
-            self.stdout.write('Deleted instances of: \n    %s uninstalled plugins  \n    %s plugins with unsaved instances\n' % (len(uninstalled_instances), len(unsaved_instances)))
+            self.stdout.write(
+                f'Deleted instances of: \n    {len(uninstalled_instances)} uninstalled plugins  \n    {len(unsaved_instances)} plugins with unsaved instances\n'
+            )
             self.stdout.write('all done\n')

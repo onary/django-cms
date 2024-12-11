@@ -1,11 +1,9 @@
-# -*- coding: utf-8 -*-
-
 from django.contrib.sitemaps import Sitemap
-from django.contrib.sites.models import Site
-from django.db.models import Q
-from django.utils import translation
+from django.db.models import OuterRef, Q, QuerySet, Subquery
 
-from cms.models import Title
+from cms.models import PageContent, PageUrl
+from cms.utils import get_current_site
+from cms.utils.i18n import get_public_languages
 
 
 def from_iterable(iterables):
@@ -13,15 +11,14 @@ def from_iterable(iterables):
     Backport of itertools.chain.from_iterable
     """
     for it in iterables:
-        for element in it:
-            yield element
+        yield from it
 
 
 class CMSSitemap(Sitemap):
-    changefreq = "monthly"
-    priority = 0.5
+    changefreq: str = "monthly"
+    priority: float = 0.5
 
-    def items(self):
+    def items(self) -> QuerySet:
         #
         # It is counter-productive to provide entries for:
         #   > Pages which redirect:
@@ -42,27 +39,33 @@ class CMSSitemap(Sitemap):
         #
         # This rules any redirected locations out.
         #
-        # If, for some reason, you require redirecting pages (Titles) to be
+        # If, for some reason, you require redirecting pages (PageContent) to be
         # included, simply create a new class inheriting from this one, and
         # supply a new items() method which doesn't filter out the redirects.
         #
-        all_titles = Title.objects.public().filter(
-            Q(redirect='') | Q(redirect__isnull=True),
-            page__login_required=False,
-            page__site=Site.objects.get_current(),
-        ).order_by('page__path')
-        return all_titles
+        # Even though items() can also return a sequence, we should return a
+        # QuerySet in this case in order to be compatible with
+        # djangocms-page-sitemap.
+        site = get_current_site()
+        languages = get_public_languages(site_id=site.pk)
 
-    def lastmod(self, title):
-        modification_dates = [title.page.changed_date, title.page.publication_date]
-        plugins_for_placeholder = lambda placeholder: placeholder.get_plugins()
-        plugins = from_iterable(map(plugins_for_placeholder, title.page.placeholders.all()))
-        plugin_modification_dates = map(lambda plugin: plugin.changed_date, plugins)
-        modification_dates.extend(plugin_modification_dates)
-        return max(modification_dates)
+        return (
+            PageUrl.objects.get_for_site(site)
+            .filter(language__in=languages, path__isnull=False, page__login_required=False)
+            .order_by("page__path")
+            .select_related("page")
+            .annotate(
+                content_pk=Subquery(
+                    PageContent.objects.filter(page=OuterRef("page"), language=OuterRef("language"))
+                    .filter(Q(redirect="") | Q(redirect=None))
+                    .values_list("pk")[:1]
+                )
+            )
+            .filter(content_pk__isnull=False)  # Remove page content with redirects
+        )
 
-    def location(self, title):
-        translation.activate(title.language)
-        url = title.page.get_absolute_url(title.language)
-        translation.deactivate()
-        return url
+    def lastmod(self, page_url):
+        return page_url.page.changed_date
+
+    def location(self, page_url):
+        return page_url.get_absolute_url(page_url.language)

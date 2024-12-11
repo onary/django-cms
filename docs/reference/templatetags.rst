@@ -15,14 +15,14 @@ top of your template::
 
     {% load cms_tags %}
 
+
+Placeholders
+============
+
 ..  templatetag:: placeholder
 
 placeholder
-===========
-
-.. versionchanged:: 2.1
-
-    The placeholder name became case sensitive.
+-----------
 
 The ``placeholder`` template tag defines a placeholder on a page. All
 placeholders in a template will be auto-detected and can be filled with
@@ -32,6 +32,10 @@ content of these plugins will appear where the ``placeholder`` tag was.
 Example::
 
     {% placeholder "content" %}
+
+.. image:: /reference/images/placeholder.png
+   :alt: a placeholder named 'content'
+   :align: center
 
 If you want additional content to be displayed in case the placeholder is
 empty, use the ``or`` argument and an additional ``{% endplaceholder %}``
@@ -67,62 +71,37 @@ pages have plugins that generate content::
 See also the :setting:`CMS_PLACEHOLDER_CONF` setting where you can also add extra
 context variables and change some other placeholder behaviour.
 
+..  important::
+
+    ``{% placeholder %}`` will only work inside the template's ``<body>``.
+
+
 ..  templatetag:: static_placeholder
 
 static_placeholder
-==================
-.. versionadded:: 3.0
+------------------
 
-The static_placeholder template tag can be used anywhere in any template and is not bound to any
-page or model. It needs a name and it will create a placeholder that you can fill with plugins
-afterwards. The static_placeholder tag is normally used to display the same content on multiple
-locations or inside of apphooks or other third party apps. Static_placeholder need to be published to
-show up on live pages.
+.. versionchanged:: 4.0
 
-Example::
+The ``static_placeholder`` template tag does **not** work with django CMS 4. It will be removed in a future version.
 
-    {% load cms_tags %}
+.. note::
 
-    {% static_placeholder "footer" %}
+    As a replacement use `django CMS Alias <https://github.com/django-cms/djangocms-alias>`_ instead. Once installed use ``{% load djangocms_alias_tags %}`` and ``{% static_alias "footer" %}`` as a replacement for ``static_placeholder``
 
-
-.. warning::
-
-    Static_placeholders are not included in the undo/redo and page history pages
-
-If you want additional content to be displayed in case the static placeholder is
-empty, use the ``or`` argument and an additional ``{% endstatic_placeholder %}``
-closing tag. Everything between ``{% static_placeholder "..." or %}`` and ``{%
-endstatic_placeholder %}`` is rendered in the event that the placeholder has no plugins or
-the plugins do not generate any output.
-
-Example::
-
-    {% static_placeholder "footer" or %}There is no content.{% endstatic_placeholder %}
-
-By default, a static placeholder applies to *all* sites in a project.
-
-If you want to make your static placeholder site-specific, so that different sites can have their
-own content in it, you can add the flag ``site`` to the template tag to achieve this.
-
-Example::
-
-    {% static_placeholder "footer" site or %}There is no content.{% endstatic_placeholder %}
-
-Note that the `Django "sites" framework <https://docs.djangoproject.com/en/dev/ref/contrib/sites/>`_ *is* required and
-``SITE_ID`` *must* be set in ``settings.py`` for this (not to mention other aspects of django CMS) to work correctly.
+    In connection with django CMS Versioning you can better manage versions of page parts that appear at several instances on your pages.
 
 ..  templatetag:: render_placeholder
 
 render_placeholder
 ==================
 
-`{% render_placeholder %}` is used if you have a PlaceholderField in your own model and want
+``{% render_placeholder %}`` is used if you have a PlaceholderField in your own model and want
 to render it in the template.
 
 The :ttag:`render_placeholder` tag takes the following parameters:
 
-* :class:`~cms.models.fields.PlaceholderField` instance
+* :class:`~cms.models.placeholdermodel.Placeholder` instance
 * ``width`` parameter for context sensitive plugins (optional)
 * ``language`` keyword plus ``language-code`` string to render content in the
   specified language (optional)
@@ -150,6 +129,11 @@ render only the English (``en``) plugins:
 
     When used in this manner, the placeholder will not be displayed for
     editing when the CMS is in edit mode.
+
+See :ref:`placeholders_outside_cms` or
+:class:`~cms.models.fields.PlaceholderRelationField` on how to get a
+specific placeholder instance.
+
 
 ..  templatetag:: render_uncached_placeholder
 
@@ -493,7 +477,7 @@ This will render to:
     model attribute. This helps prevent a range of security vulnerabilities
     stemming from HTML, JavaScript, and CSS Code Injection.
 
-    To change this behavior, the project administrator should carefully review
+    To change this behaviour, the project administrator should carefully review
     each use of this template tag and ensure that all content which is rendered
     to a page using this template tag is cleansed of any potentially harmful
     HTML markup, CSS styles or JavaScript.
@@ -575,7 +559,7 @@ method is available; also template tags and filters are available in the block.
     model attribute. This helps prevent a range of security vulnerabilities
     stemming from HTML, JavaScript, and CSS Code Injection.
 
-    To change this behavior, the project administrator should carefully review
+    To change this behaviour, the project administrator should carefully review
     each use of this template tag and ensure that all content which is rendered
     to a page using this template tag is cleansed of any potentially harmful
     HTML markup, CSS styles or JavaScript.
@@ -642,7 +626,7 @@ It will render to something like:
     model attribute. This helps prevent a range of security vulnerabilities
     stemming from HTML, JavaScript, and CSS Code Injection.
 
-    To change this behavior, the project administrator should carefully review
+    To change this behaviour, the project administrator should carefully review
     each use of this template tag and ensure that all content which is rendered
     to a page using this template tag is cleansed of any potentially harmful
     HTML markup, CSS styles or JavaScript.
@@ -705,7 +689,7 @@ It will render to something like:
     model attribute. This helps prevent a range of security vulnerabilities
     stemming from HTML, JavaScript, and CSS Code Injection.
 
-    To change this behavior, the project administrator should carefully review
+    To change this behaviour, the project administrator should carefully review
     each use of this template tag and ensure that all content which is rendered
     to a page using this template tag is cleansed of any potentially harmful
     HTML markup, CSS styles or JavaScript.
@@ -795,8 +779,8 @@ function with the ``set_language_changer`` function in ``menus.utils``.
 
 For more information, see :doc:`/topics/i18n`.
 
-..  templatetag:: language_chooser
 
+..  templatetag:: language_chooser
 
 language_chooser
 ================
@@ -838,10 +822,14 @@ Toolbar template tags
 
 .. highlightlang:: html+django
 
-The ``cms_toolbar`` template tag is included in the ``cms_tags`` library and will add the
-required CSS and javascript to the sekizai blocks in the base template. The template tag
-has to be placed after the ``<body>`` tag and before any ``{% placeholder %}`` occurrences
-within your HTML.
+The ``cms_toolbar`` template tag is included in the ``cms_tags`` library and will add the required
+CSS and javascript to the sekizai blocks in the base template. The template tag must be placed
+before any ``{% placeholder %}`` occurrences within your HTML.
+
+..  important::
+
+    ``{% cms_toolbar %}`` will only work correctly inside the template's ``<body>``.
+
 
 Example::
 
@@ -851,9 +839,8 @@ Example::
     ...
 
 
-.. note::
+..  note::
 
-    Be aware that you can not surround the cms_toolbar tag with block tags.
+    Be aware that you cannot surround the ``cms_toolbar`` tag with block tags.
     The toolbar tag will render everything below it to collect all plugins and placeholders, before
     it renders itself. Block tags interfere with this.
-

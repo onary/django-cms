@@ -72,7 +72,7 @@ class Migration(migrations.Migration):
             name='is_page_type',
             field=models.BooleanField(default=False, help_text='Mark this page as a page type'),
         ),
-        migrations.RunPython(merge_page_treenode, migrations.RunPython.noop),
+        migrations.RunPython(merge_page_treenode),
         migrations.AlterField(
             model_name='page',
             name='depth',

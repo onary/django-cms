@@ -1,10 +1,10 @@
-# -*- coding: utf-8 -*-
-from cms.models import Page
+from django.conf import settings
+from django.template import Template
+
+from cms.models import Page, PageContent
 from cms.test_utils.fixtures.navextenders import NavextendersFixture
 from cms.test_utils.testcases import CMSTestCase
 from cms.test_utils.util.menu_extender import TestMenu
-from django.conf import settings
-from django.template import Template
 from menus.menu_pool import menu_pool
 
 
@@ -33,10 +33,10 @@ class NavExtenderTestCase(NavextendersFixture, CMSTestCase):
         menu_pool.menus = self.old_menu
 
     def _get_page(self, num):
-        return Page.objects.get(title_set__title='page%s' % num)
+        return Page.objects.get(pagecontent_set__title='page%s' % num)
 
     def _update_page(self, num, **stuff):
-        Page.objects.filter(title_set__title='page%s' % num).update(**stuff)
+        Page.objects.filter(pagecontent_set__title='page%s' % num).update(**stuff)
 
     def test_menu_registration(self):
         self.assertEqual(len(menu_pool.menus), 2)
@@ -53,7 +53,7 @@ class NavExtenderTestCase(NavextendersFixture, CMSTestCase):
         self.assertEqual(len(nodes), 2)
         self.assertEqual(len(nodes[0].children), 4)
         self.assertEqual(len(nodes[0].children[3].children), 1)
-        self._update_page(1, in_navigation=False)
+        PageContent.objects.filter(title='page1').update(in_navigation=False)
         menu_pool.clear(settings.SITE_ID)
         tpl = Template("{% load menu_tags %}{% show_menu %}")
         tpl.render(context)
@@ -74,7 +74,7 @@ class NavExtenderTestCase(NavextendersFixture, CMSTestCase):
         """
         TestMenu has 4 flat nodes
         """
-        self._update_page(1, in_navigation=False)
+        PageContent.objects.filter(title='page1').update(in_navigation=False)
         self._update_page(2, navigation_extenders="TestMenu")
         menu_pool.clear(settings.SITE_ID)
         menu_pool.clear(settings.SITE_ID)

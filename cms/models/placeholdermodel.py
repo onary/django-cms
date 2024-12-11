@@ -1,78 +1,69 @@
-# -*- coding: utf-8 -*-
-
 import warnings
-
 from datetime import datetime, timedelta
 
-from django.contrib import admin
-from django.db import models
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
+from django.db import connection, models, transaction
 from django.template.defaultfilters import title
-import six
-
-from django.utils.translation import ugettext_lazy as _
 from django.utils.encoding import force_str
+from django.utils.translation import gettext_lazy as _
 
+from cms.cache import invalidate_cms_page_cache
 from cms.cache.placeholder import clear_placeholder_cache
+from cms.constants import EXPIRE_NOW, MAX_EXPIRATION_TTL
 from cms.exceptions import LanguageError
-from cms.utils import get_site_id
-from cms.utils.compat import DJANGO_1_8
+from cms.models.managers import PlaceholderManager
+from cms.utils import get_language_from_request, permissions
+from cms.utils.conf import get_cms_setting, get_site_id
 from cms.utils.i18n import get_language_object
-from cms.utils.urlutils import admin_reverse
-from cms.constants import (
-    EXPIRE_NOW,
-    MAX_EXPIRATION_TTL,
-    PUBLISHER_STATE_DIRTY,
-)
-from cms.utils import get_language_from_request
-from cms.utils import permissions
-from cms.utils.conf import get_cms_setting
-from cms.utils.helpers import reversion_register
-
 
 
 class Placeholder(models.Model):
     """
-    Attributes:
-        is_static       Set to "True" for static placeholders by the template tag
-        is_editable     If False the content of the placeholder is not editable in the frontend
+
+    ``Placeholders`` can be filled with plugins, which store or generate content.
+
     """
+    #: slot name that appears in the frontend
     slot = models.CharField(_("slot"), max_length=255, db_index=True, editable=False)
+    #: A default width is passed to the templace context as ``width``
     default_width = models.PositiveSmallIntegerField(_("width"), null=True, editable=False)
-    cache_placeholder = True
-    is_static = False
-    is_editable = True
+    content_type = models.ForeignKey(
+        ContentType,
+        blank=True,
+        null=True,
+        on_delete=models.SET_NULL,
+    )
+    object_id = models.PositiveIntegerField(blank=True, null=True)
+    source = GenericForeignKey('content_type', 'object_id')
+    cache_placeholder = True  #: Flag caching the palceholder's content
+    is_static = False  #: Set to "True" for static placeholders (by the template tag)
+    is_editable = True  #: If False the content of the placeholder is not editable in the frontend
+
+    objects = PlaceholderManager()
 
     class Meta:
         app_label = 'cms'
+        default_permissions = []
         permissions = (
-            (u"use_structure", u"Can use Structure mode"),
+            ("use_structure", "Can use Structure mode"),
         )
 
     def __str__(self):
         return self.slot
 
+    def __repr__(self):
+        display = f"<{self.__module__}.{self.__class__.__name__} id={self.pk} slot='{self.slot}' object at {hex(id(self))}>"
+        return display
+
     def clear(self, language=None):
-        if language:
-            qs = self.cmsplugin_set.filter(language=language)
-        else:
-            qs = self.cmsplugin_set.all()
-        qs = qs.order_by('-depth').select_related()
-        for plugin in qs:
-            inst, cls = plugin.get_plugin_instance()
-            if inst and getattr(inst, 'cmsplugin_ptr', False):
-                inst.cmsplugin_ptr._no_reorder = True
-                inst._no_reorder = True
-                inst.delete(no_mp=True)
-            else:
-                plugin._no_reorder = True
-                plugin.delete(no_mp=True)
+        """Deletes all plugins from the placeholder"""
+        self.get_plugins(language).delete()
 
     def get_label(self):
         from cms.utils.placeholder import get_placeholder_conf
-        if self.page:
-            template = self.page.get_template()
-        else:
-            template = None
+
+        template = self.page.get_template() if self.page else None
         name = get_placeholder_conf("name", self.slot, template=template, default=title(self.slot))
         name = _(name)
         return name
@@ -81,57 +72,23 @@ class Placeholder(models.Model):
         from cms.utils.placeholder import get_placeholder_conf
         return get_placeholder_conf("extra_context", self.slot, template, {})
 
-    def get_add_url(self):
-        return self._get_url('add_plugin')
-
-    def get_edit_url(self, plugin_pk):
-        return self._get_url('edit_plugin', plugin_pk)
-
-    def get_move_url(self):
-        return self._get_url('move_plugin')
-
-    def get_delete_url(self, plugin_pk):
-        return self._get_url('delete_plugin', plugin_pk)
-
-    def get_changelist_url(self):
-        return self._get_url('changelist')
-
-    def get_clear_url(self):
-        return self._get_url('clear_placeholder', self.pk)
-
-    def get_copy_url(self):
-        return self._get_url('copy_plugins')
-
     def get_extra_menu_items(self):
         from cms.plugin_pool import plugin_pool
         return plugin_pool.get_extra_placeholder_menu_items(self)
 
-    def _get_url(self, key, pk=None):
-        model = self._get_attached_model()
-        args = []
-        if pk:
-            args.append(pk)
-        if not model:
-            return admin_reverse('cms_page_%s' % key, args=args)
-        else:
-            app_label = model._meta.app_label
-            model_name = model.__name__.lower()
-            return admin_reverse('%s_%s_%s' % (app_label, model_name, key), args=args)
-
     def has_change_permission(self, user):
         """
-        Returns True if user has permission
-        to change all models attached to this placeholder.
+        Returns ``True`` if user has permission to change all models attached to this placeholder.
         """
         from cms.utils.permissions import get_model_permission_codename
-
-        if user.is_superuser:
-            return True
 
         attached_models = self._get_attached_models()
 
         if not attached_models:
-            return False
+            # technically if placeholder is not attached to anything,
+            # user should not be able to change it but if is superuser
+            # then we "should" allow it.
+            return user.is_superuser
 
         attached_objects = self._get_attached_objects()
 
@@ -148,6 +105,9 @@ class Placeholder(models.Model):
         return True
 
     def has_add_plugin_permission(self, user, plugin_type):
+        """
+        Returns ``True`` if user has permission to add ``plugin_type`` to this placeholder.
+        """
         if not permissions.has_plugin_permission(user, plugin_type, "add"):
             return False
 
@@ -156,6 +116,9 @@ class Placeholder(models.Model):
         return True
 
     def has_add_plugins_permission(self, user, plugins):
+        """
+        Returns ``True`` if user has permission to add **all** plugins in ``plugins`` to this placeholder.
+        """
         if not self.has_change_permission(user):
             return False
 
@@ -165,6 +128,9 @@ class Placeholder(models.Model):
         return True
 
     def has_change_plugin_permission(self, user, plugin):
+        """
+        Returns ``True`` if user has permission to change ``plugin`` to this placeholder.
+        """
         if not permissions.has_plugin_permission(user, plugin.plugin_type, "change"):
             return False
 
@@ -173,6 +139,9 @@ class Placeholder(models.Model):
         return True
 
     def has_delete_plugin_permission(self, user, plugin):
+        """
+        Returns ``True`` if user has permission to delete ``plugin`` to this placeholder.
+        """
         if not permissions.has_plugin_permission(user, plugin.plugin_type, "delete"):
             return False
 
@@ -181,6 +150,9 @@ class Placeholder(models.Model):
         return True
 
     def has_move_plugin_permission(self, user, plugin, target_placeholder):
+        """
+        Returns ``True`` if user has permission to move ``plugin`` to the ``target_placeholder``.
+        """
         if not permissions.has_plugin_permission(user, plugin.plugin_type, "change"):
             return False
 
@@ -192,11 +164,17 @@ class Placeholder(models.Model):
         return True
 
     def has_clear_permission(self, user, languages):
+        """
+        Returns ``True`` if user has permission to delete all plugins in this placeholder
+        """
         if not self.has_change_permission(user):
             return False
         return self.has_delete_plugins_permission(user, languages)
 
     def has_delete_plugins_permission(self, user, languages):
+        """
+        Returns ``True`` if user has permission to delete all plugins in this placeholder
+        """
         plugin_types = (
             self
             .cmsplugin_set
@@ -216,28 +194,19 @@ class Placeholder(models.Model):
                 return False
         return True
 
-    def render(self, context, width, lang=None, editable=True, use_cache=True):
-        '''
-        Set editable = False to disable front-end rendering for this render.
-        '''
-        content_renderer = context.get('cms_content_renderer')
-
-        if not content_renderer:
-            return '<!-- missing cms_content_renderer -->'
-
-        width = width or self.default_width
-
-        if width:
-            context['width'] = width
-
-        content = content_renderer.render_placeholder(
-            self,
-            context,
-            language=lang,
-            editable=editable,
-            use_cache=use_cache,
+    def _get_source_remote_field(self):
+        if self.source is None:
+            return
+        return next(
+            f for f in self.source._meta.get_fields()
+            if f.related_model == Placeholder
         )
-        return content
+
+    def check_source(self, user):
+        remote_field = self._get_source_remote_field()
+        if remote_field is None:
+            return True
+        return remote_field.run_checks(self, user)
 
     def _get_related_objects(self):
         fields = self._meta._get_fields(
@@ -249,95 +218,36 @@ class Placeholder(models.Model):
 
     def _get_attached_fields(self):
         """
-        Returns an ITERATOR of all non-cmsplugin reverse related fields.
+        Returns a list of all non-cmsplugin reverse related fields.
         """
-        from cms.models import CMSPlugin, UserSettings
+        from cms.models import CMSPlugin
+
         if not hasattr(self, '_attached_fields_cache'):
             self._attached_fields_cache = []
             relations = self._get_related_objects()
             for rel in relations:
-                if issubclass(rel.model, CMSPlugin):
+                if issubclass(rel.field.model, CMSPlugin):
                     continue
-                from cms.admin.placeholderadmin import PlaceholderAdminMixin
-                related_model = rel.related_model
+
+                field = getattr(self, rel.get_accessor_name())
 
                 try:
-                    admin_class = admin.site._registry[related_model]
-                except KeyError:
-                    admin_class = None
-
-                # UserSettings is a special case
-                # Attached objects are used to check permissions
-                # and we filter out any attached object that does not
-                # inherit from PlaceholderAdminMixin
-                # Because UserSettings does not (and shouldn't) inherit
-                # from PlaceholderAdminMixin, we add a manual exception.
-                is_user_settings = related_model == UserSettings
-
-                if is_user_settings or isinstance(admin_class, PlaceholderAdminMixin):
-                    field = getattr(self, rel.get_accessor_name())
-                    try:
-                        if field.exists():
-                            self._attached_fields_cache.append(rel.field)
-                    except:
-                        pass
+                    if field.exists():
+                        self._attached_fields_cache.append(rel.field)
+                except:  # NOQA
+                    pass
         return self._attached_fields_cache
 
     def _get_attached_field(self):
-        from cms.models import CMSPlugin, StaticPlaceholder, Page
-        if not hasattr(self, '_attached_field_cache'):
-            self._attached_field_cache = None
-            relations = self._get_related_objects()
-            for rel in relations:
-                parent = rel.related_model
-                if parent == Page or parent == StaticPlaceholder:
-                    relations.insert(0, relations.pop(relations.index(rel)))
-            for rel in relations:
-                if issubclass(rel.model, CMSPlugin):
-                    continue
-                from cms.admin.placeholderadmin import PlaceholderAdminMixin
-                parent = rel.related_model
-                if parent in admin.site._registry and isinstance(admin.site._registry[parent], PlaceholderAdminMixin):
-                    field = getattr(self, rel.get_accessor_name())
-                    try:
-                        if field.exists():
-                            self._attached_field_cache = rel.field
-                            break
-                    except:
-                        pass
-        return self._attached_field_cache
-
-    def _get_attached_field_name(self):
-        field = self._get_attached_field()
-        if field:
-            return field.name
-        return None
+        try:
+            return self._get_attached_fields()[0]
+        except IndexError:
+            return None
 
     def _get_attached_model(self):
-        if hasattr(self, '_attached_model_cache'):
-            return self._attached_model_cache
-        if self.page or self.page_set.exists():
-            from cms.models import Page
-            self._attached_model_cache = Page
-            return Page
-        field = self._get_attached_field()
-        if field:
-            self._attached_model_cache = field.model
-            return field.model
-        self._attached_model_cache = None
+        if self.source:
+            return self.source._meta.model
         return None
-
-    def _get_attached_admin(self, admin_site=None):
-        from django.contrib.admin import site
-
-        if not admin_site:
-            admin_site = site
-
-        model = self._get_attached_model()
-
-        if not model:
-            return
-        return admin_site._registry.get(model)
 
     def _get_attached_models(self):
         """
@@ -345,49 +255,62 @@ class Placeholder(models.Model):
         """
         if hasattr(self, '_attached_models_cache'):
             return self._attached_models_cache
+
         self._attached_models_cache = [field.model for field in self._get_attached_fields()]
+
+        if self.source:
+            self._attached_models_cache += [self.source._meta.model]
         return self._attached_models_cache
 
     def _get_attached_objects(self):
         """
         Returns a list of objects attached to this placeholder.
         """
-        if DJANGO_1_8:
-            return [obj for field in self._get_attached_fields()
-                    for obj in getattr(self, field.related.get_accessor_name()).all()]
-        else:
-            return [obj for field in self._get_attached_fields()
-                    for obj in getattr(self, field.remote_field.get_accessor_name()).all()]
+        objs = [obj for field in self._get_attached_fields()
+                for obj in getattr(self, field.remote_field.get_accessor_name()).all()]
+
+        if not objs and self.source:
+            return [self.source]
+        return objs
 
     def page_getter(self):
         if not hasattr(self, '_page'):
             from cms.models.pagemodel import Page
             try:
-                self._page = Page.objects.get(placeholders=self)
-            except (Page.DoesNotExist, Page.MultipleObjectsReturned,):
+                self._page = Page.objects.distinct().get(pagecontent_set__placeholders=self)
+            except (Page.DoesNotExist, Page.MultipleObjectsReturned):
                 self._page = None
         return self._page
 
     def page_setter(self, value):
         self._page = value
 
+    #: Gives the page object if the placeholder belongs to a :class:`cms.models.titlemodels.PageContent` object
+    #: (and not to some other model.) If the placeholder is not attached to a page it returns ``None``
     page = property(page_getter, page_setter)
 
     def get_plugins_list(self, language=None):
+        """Returns a list of plugins attached to this placeholder. If language is given only plugins
+        in the given language are returned."""
         return list(self.get_plugins(language))
 
     def get_plugins(self, language=None):
+        """Returns a queryset of plugins attached to this placeholder. If language is given only plugins
+        in the given language are returned."""
         if language:
-            return self.cmsplugin_set.filter(language=language).order_by('path')
-        else:
-            return self.cmsplugin_set.all().order_by('path')
+            return self.cmsplugin_set.filter(language=language)
+        return self.cmsplugin_set.all()
+
+    def has_plugins(self, language=None):
+        """Checks if placeholder is empty (``False``) or populated (``True``)"""
+        return self.get_plugins(language).exists()
 
     def get_filled_languages(self):
         """
         Returns language objects for every language for which the placeholder
         has plugins.
 
-        This is not cached as it's meant to eb used in the frontend editor.
+        This is not cached as it's meant to be used in the frontend editor.
         """
 
         languages = []
@@ -415,7 +338,7 @@ class Placeholder(models.Model):
         Returns the number of seconds (from «response_timestamp») that this
         placeholder can be cached. This is derived from the plugins it contains.
 
-        This method must return: EXPIRE_NOW <= int <= MAX_EXPIRATION_IN_SECONDS
+        This method must return: ``EXPIRE_NOW <= int <= MAX_EXPIRATION_IN_SECONDS``
 
         :type request: HTTPRequest
         :type response_timestamp: datetime
@@ -503,34 +426,13 @@ class Placeholder(models.Model):
         return min_ttl
 
     def clear_cache(self, language, site_id=None):
-        if not site_id:
-            site_id = getattr(self.page, 'site_id', None)
+        if get_cms_setting('PAGE_CACHE'):
+            # Clears all the page caches
+            invalidate_cms_page_cache()
+
+        if not site_id and self.page:
+            site_id = self.page.site_id
         clear_placeholder_cache(self, language, get_site_id(site_id))
-
-    def mark_as_dirty(self, language, clear_cache=True):
-        """
-        Utility method to mark the attached object of this placeholder
-        (if any) as dirty.
-        This allows us to know when the content in this placeholder
-        has been changed.
-        """
-        from cms.models import Page, StaticPlaceholder, Title
-
-        if clear_cache:
-            self.clear_cache(language)
-
-        # Find the attached model for this placeholder
-        # This can be a static placeholder, page or none.
-        attached_model = self._get_attached_model()
-
-        if attached_model is Page:
-            Title.objects.filter(
-                page=self.page,
-                language=language,
-            ).update(publisher_state=PUBLISHER_STATE_DIRTY)
-
-        elif attached_model is StaticPlaceholder:
-            StaticPlaceholder.objects.filter(draft=self).update(dirty=True)
 
     def get_plugin_tree_order(self, language, parent_id=None):
         """
@@ -572,7 +474,7 @@ class Placeholder(models.Model):
             if not vary_on:
                 # None, or an empty iterable
                 continue
-            if isinstance(vary_on, six.string_types):
+            if isinstance(vary_on, str):
                 if vary_on.lower() not in vary_list:
                     vary_list.add(vary_on.lower())
             else:
@@ -592,5 +494,308 @@ class Placeholder(models.Model):
 
         return sorted(list(vary_list))
 
+    def copy_plugins(self, target_placeholder, language=None, root_plugin=None):
+        from cms.utils.plugins import copy_plugins_to_placeholder
 
-reversion_register(Placeholder)
+        new_plugins = copy_plugins_to_placeholder(
+            plugins=self.get_plugins_list(language),
+            placeholder=target_placeholder,
+            language=language,
+            root_plugin=root_plugin,
+        )
+        return new_plugins
+
+    def add_plugin(self, instance):
+        """
+        .. versionadded:: 4.0
+
+        Adds a plugin to the placeholder. The plugin's position field must be set to the target
+        position. Positions are enumerated from the start of the palceholder's plugin tree (1) to
+        the last plugin (*n*, where *n* is the number of plugins in the placeholder).
+
+        :param instance: Plugin to add. It's position parameter needs to be set.
+        :type instance: :class:`cms.models.pluginmodel.CMSPlugin` instance
+
+        .. note::
+            As of version 4 of django CMS the position counter does not re-start at 1 for the first
+            child plugin. The ``position`` field  and ``language`` field are unique for a placeholder.
+
+        Example::
+
+            new_child = MyCoolPlugin()
+            new_child.position = parent_plugin.position + 1  # add as first child: directly after parent
+            parent_plugin.placeholder.add(new_child)
+
+        """
+        last_position = self.get_last_plugin_position(instance.language) or 0
+        # A shift is only needed if the distance between the new plugin
+        # and the last plugin is greater than 1 position.
+        needs_shift = (instance.position - last_position) < 1
+
+        if needs_shift:
+            # shift to the right
+            self._shift_plugin_positions(
+                instance.language,
+                start=instance.position,
+                offset=last_position - instance.position + 2,  # behind last_position plus one to shift back
+            )
+
+        instance.save()
+
+        if needs_shift:
+            # The plugin tree was shifted to the right to make space,
+            # now squash all plugins in the tree to close any holes.
+            self._recalculate_plugin_positions(instance.language)
+        return instance
+
+    def move_plugin(self, plugin, target_position, target_placeholder=None, target_plugin=None):
+        """
+        .. versionadded:: 4.0
+
+        Moves a plugin within the placeholder (``target_placeholder=None``) or to another placeholder.
+
+        :param plugin: Plugin to move
+        :type plugin: :class:`cms.models.pluginmodel.CMSPlugin` instance
+        :param int target_position: The plugin's new position
+        :param  target_placeholder: Placeholder to move plugin to (or ``None``)
+        :type target_placeholder: :class:`cms.models.placeholdermodel.Placeholder` instance
+        :param target_plugin: New parent plugin (or ``None``). The target plugin must be in the same placeholder
+           or in the ``target_placeholder`` if one is given.
+        :type target_plugin: :class:`cms.models.pluginmodel.CMSPlugin` instance
+
+        The ``target_position`` is enumerated from the start of the palceholder's plugin tree (1) to
+        the last plugin (*n*, where *n* is the number of plugins in the placeholder).
+        """
+
+        if target_placeholder:
+            return self._move_plugin_to_placeholder(
+                plugin=plugin,
+                target_position=target_position,
+                target_placeholder=target_placeholder,
+                target_plugin=target_plugin,
+            )
+
+        target_tree = self.get_plugins(plugin.language)
+        last_plugin = self.get_last_plugin(plugin.language)
+        source_plugin_desc_count = plugin._get_descendants_count()
+        # Attn: The following line assumes that all children and grand-children have consecutive positions!
+        source_plugin_range = (plugin.position, plugin.position + source_plugin_desc_count)
+
+        if target_position < plugin.position:
+            # Moving left
+            # Make a big hole on the right side of the current plugin's position
+            # by shifting all right nodes further to the right, excluding the current plugin
+            # but including the target plugin and its descendants.
+            (target_tree
+             .filter(position__gte=target_position)
+             .exclude(position__range=source_plugin_range)
+             ).update(position=(models.F('position') + last_plugin.position))
+
+            # Make a big hole on the left side of the current plugin's position
+            # by shifting all right nodes further the right, including the current plugin
+            # and its descendants.
+            target_tree.filter(
+                position__lte=source_plugin_range[1]
+            ).update(position=models.F('position') - last_plugin.position)
+        else:
+            # Moving right
+            # Make a big hole on the left side of the target position,
+            # by shifting all left nodes further to the left, excluding the current plugin
+            # but including the target plugin and its descendants.
+            # Left node in the common case is target_position but if the current plugin
+            # has descendants then left node is the closest node to the right side of the
+            # last descendant.
+            (target_tree
+             .filter(position__lte=target_position + source_plugin_desc_count)
+             .exclude(position__range=source_plugin_range)
+             ).update(position=(models.F('position') - last_plugin.position))
+
+            # Make a big hole on the right side of the current plugin's position
+            # by shifting all right nodes further the right, including the current plugin
+            # and its descendants.
+            target_tree.filter(
+                position__gte=plugin.position
+            ).update(position=models.F('position') + last_plugin.position)
+
+        if plugin.parent != target_plugin:
+            # Plugin is being moved to another tree (under another parent)
+            # OR plugin is being moved to the root (no parent)
+            plugin.update(parent=target_plugin)
+        # The plugin tree was shifted to the right to make space,
+        # Squash all plugin positions in the tree to close any holes.
+        self._recalculate_plugin_positions(plugin.language)
+
+    def _move_plugin_to_placeholder(self, plugin, target_position, target_placeholder, target_plugin=None):
+        source_last_plugin = self.get_last_plugin(plugin.language)
+        target_last_plugin = target_placeholder.get_last_plugin(plugin.language)
+
+        plugin_descendants = plugin.get_descendants()
+        if target_last_plugin:
+            source_length = source_last_plugin.position
+            target_length = target_last_plugin.position
+            plugins_to_move_count = 1 + len(plugin_descendants)  # parent plus descendants
+
+            source_offset = max(
+                # far enough to shift behind current last source position
+                source_length,
+                # far enough to be shifted behind last target position plus no. of moved plugins
+                target_length + plugins_to_move_count
+            ) - plugin.position + 1
+
+            # move target position counter to at least behind
+            target_offset = max(
+                # far enough to shift behind current last target position
+                target_length - target_position + 1,
+                # far enough to leave enough space to move back
+                plugin.position + source_offset - target_position + plugins_to_move_count
+            )
+            target_placeholder._shift_plugin_positions(
+                plugin.language,
+                start=target_position,
+                offset=target_offset,
+            )
+        else:
+            # moving to empty placeholder:
+            # Move out (remaining) plugins right behind last source position to be able to recalculate
+            source_offset = source_last_plugin.position
+
+        # Shift all plugins whose position is greater than or equal to
+        # the plugin being moved. This includes the plugin itself.
+        # This is to create enough space in-between for the squashing
+        # to work without conflicts.
+        self._shift_plugin_positions(
+            plugin.language,
+            start=plugin.position,
+            offset=source_offset,
+        )
+
+        plugin.update(parent=target_plugin, placeholder=target_placeholder)
+        # TODO: More efficient is to do raw sql update
+        plugin_descendants.update(placeholder=target_placeholder)
+        self._recalculate_plugin_positions(plugin.language)
+        target_placeholder._recalculate_plugin_positions(plugin.language)
+
+    def delete_plugin(self, instance):
+        """
+        .. versionadded:: 4.0
+
+        Removes a plugin and its descendants from the placeholder and database.
+
+        :param instance: Plugin to add. It's position parameter needs to be set.
+        :type instance: :class:`cms.models.pluginmodel.CMSPlugin` instance
+        """
+        with transaction.atomic():
+            # We're using raw sql - make the whole operation atomic
+            plugins = self.get_plugins(language=instance.language).count()  # 1st hit: Count plugins
+            descendants = instance._get_descendants_ids()  # 2nd hit: Get descendant ids
+            to_delete = [instance.pk] + descendants  # Instance plus descendants pk
+            self.cmsplugin_set.filter(pk__in=to_delete).delete()  # 3rd hit: Delete all plugins in one query
+
+            last_position = instance.position + len(descendants)  # Last position of deleted plugins
+            if last_position < plugins:
+                # Close the gap in the plugin tree (2 hits)
+                self._shift_plugin_positions(
+                    instance.language,
+                    start=instance.position,
+                    offset=plugins,
+                )
+                self._recalculate_plugin_positions(instance.language)
+
+    def get_last_plugin(self, language):
+        return self.get_plugins(language).last()
+
+    def get_next_plugin_position(self, language, parent=None, insert_order='first'):
+        """
+        .. versionadded:: 4.0
+
+        Helper to calculate plugin positions correctly.
+
+        :param str language: language for which the position is to be calculated
+        :param parent: Parent plugin or ``None`` (if position is on top level)
+        :type parent: :class:`cms.models.pluginmodel.CMSPlugin` instance
+        :param str insert_order: Either ``"first"`` (default) or ``"last"``
+        """
+        if insert_order == 'first':
+            position = self.get_first_plugin_position(language, parent=parent)
+        else:
+            position = self.get_last_plugin_position(language, parent=parent)
+
+        if parent and position is None:
+            return parent.position + 1
+
+        if insert_order == 'last':
+            return (position or 0) + 1
+        return position or 1
+
+    def get_first_plugin_position(self, language, parent=None):
+        tree = self.get_plugins(language)
+
+        if parent:
+            tree = tree.filter(parent=parent)
+        return tree.values_list('position', flat=True).first()
+
+    def get_last_plugin_position(self, language, parent=None):
+        if parent is None:
+            tree = self.get_plugins(language)
+        elif parent.placeholder == self:
+            tree = parent.get_descendants()
+        else:  # No last plugin if parent is not in this placeholder's plugin tree
+            return None
+        return tree.values_list('position', flat=True).last()
+
+    def _shift_plugin_positions(self, language, start, offset=None):
+        if offset is None:
+            offset = self.get_last_plugin_position(language) or 0
+
+        self.get_plugins(language).filter(
+            position__gte=start
+        ).update(position=models.F('position') + offset)
+
+    def _recalculate_plugin_positions(self, language):
+        from cms.models.pluginmodel import (
+            CMSPlugin,
+            _get_database_cursor,
+            _get_database_vendor,
+        )
+
+        cursor = _get_database_cursor('write')
+        db_vendor = _get_database_vendor('write')
+
+        if db_vendor in ('sqlite', 'postgresql'):
+            sql = (
+                'UPDATE {0} '
+                'SET position = subquery.new_pos '
+                'FROM ('
+                '  SELECT  ID, ROW_NUMBER() OVER (ORDER BY position, id) AS new_pos '
+                '  FROM {0} WHERE placeholder_id=%s AND language=%s '
+                ') subquery '
+                'WHERE {0}.id=subquery.id'
+            )
+            sql = sql.format(connection.ops.quote_name(CMSPlugin._meta.db_table))
+            cursor.execute(sql, [self.pk, language])
+        elif db_vendor == 'mysql':
+            sql = (
+                'UPDATE {0} '
+                'SET position = ('
+                'SELECT COUNT(*)+1 FROM (SELECT * FROM {0}) t '
+                'WHERE placeholder_id={0}.placeholder_id AND language={0}.language '
+                'AND {0}.position > t.position'
+                ') WHERE placeholder_id=%s AND language=%s'
+            )
+            sql = sql.format(connection.ops.quote_name(CMSPlugin._meta.db_table))
+            cursor.execute(sql, [self.pk, language])
+        elif db_vendor == 'oracle':
+            sql = (
+                'UPDATE {0} '
+                'SET position = ('
+                'SELECT COUNT(*)+1 FROM (SELECT * FROM {0}) t '
+                'WHERE placeholder_id={0}.placeholder_id AND language={0}.language '
+                'AND {0}.position > t.position'
+                ') WHERE placeholder_id=%s AND language=%s'
+            )
+            sql = sql.format(connection.ops.quote_name(CMSPlugin._meta.db_table))
+            cursor.execute(sql, [self.pk, language])
+        else:
+            raise RuntimeError(
+                f'{connection.vendor} is not supported by django-cms'
+            )

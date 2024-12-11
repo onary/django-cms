@@ -1,8 +1,4 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
-
 from cms.models import CMSPlugin
-
 
 
 class MultiColumns(CMSPlugin):
@@ -12,4 +8,4 @@ class MultiColumns(CMSPlugin):
 
     def __str__(self):
         plugins = self.child_plugin_instances or []
-        return "{} columns".format(len(plugins))
+        return f"{len(plugins)} columns"

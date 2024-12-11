@@ -1,16 +1,15 @@
-# -*- coding: utf-8 -*-
 import warnings
 
 from django.core.exceptions import ImproperlyConfigured
-from django.utils.translation import ugettext as _
+from django.utils.module_loading import autodiscover_modules, import_string
+from django.utils.translation import gettext as _
 
 from cms.app_base import CMSApp
 from cms.exceptions import AppAlreadyRegistered
 from cms.utils.conf import get_cms_setting
-from cms.utils.django_load import load, iterload_objects
 
 
-class ApphookPool(object):
+class ApphookPool:
 
     def __init__(self):
         self.apphooks = []
@@ -33,17 +32,19 @@ class ApphookPool(object):
 
         if app.__name__ in self.apps:
             raise AppAlreadyRegistered(
-                'A CMS application %r is already registered' % app.__name__)
+                'A CMS application %r is already registered' % app.__name__
+            )
 
         if not issubclass(app, CMSApp):
             raise ImproperlyConfigured(
-                'CMS application must inherit from cms.app_base.CMSApp, '
-                'but %r does not' % app.__name__)
+                'CMS application must inherit from cms.app_base.CMSApp, but %r does not' % app.__name__
+            )
 
         if not hasattr(app, 'menus') and hasattr(app, 'menu'):
-            warnings.warn("You define a 'menu' attribute on CMS application "
-                "%r, but the 'menus' attribute is empty, "
-                "did you make a typo?" % app.__name__)
+            warnings.warn(
+                "You define a 'menu' attribute on CMS application %r, but the 'menus' attribute is empty, "
+                "did you make a typo?" % app.__name__
+            )
 
         self.apps[app.__name__] = app()
         return app
@@ -52,14 +53,15 @@ class ApphookPool(object):
         self.apphooks = get_cms_setting('APPHOOKS')
 
         if self.apphooks:
-            for cls in iterload_objects(self.apphooks):
+            for path in self.apphooks:
+                cls = import_string(path)
                 try:
                     self.register(cls, discovering_apps=True)
                 except AppAlreadyRegistered:
                     pass
 
         else:
-            load('cms_apps')
+            autodiscover_modules('cms_apps')
 
         self.discovered = True
 
@@ -71,9 +73,8 @@ class ApphookPool(object):
 
         for app_name in self.apps:
             app = self.apps[app_name]
-
             if app.get_urls():
-                hooks.append((app_name, app.name))
+                hooks.append((app_name, app.name or app_name))
 
         # Unfortunately, we lose the ordering since we now have a list of
         # tuples. Let's reorder by app_name:

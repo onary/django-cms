@@ -4,27 +4,24 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import FieldError
-from django.core.exceptions import PermissionDenied
 from django.template import TemplateDoesNotExist, TemplateSyntaxError
 from djangocms_text_ckeditor.cms_plugins import TextPlugin
 from djangocms_text_ckeditor.models import Text
-from menus.menu_pool import menu_pool
 
 from cms.api import (
-    generate_valid_slug,
-    create_page,
     _verify_plugin_type,
+    add_plugin,
     assign_user_to_page,
-    publish_page,
+    create_page,
 )
 from cms.apphook_pool import apphook_pool
 from cms.constants import TEMPLATE_INHERITANCE_MAGIC
-from cms.models.pagemodel import Page
-from cms.models.permissionmodels import GlobalPagePermission
+from cms.models import Page, Placeholder
 from cms.plugin_base import CMSPluginBase
 from cms.test_utils.testcases import CMSTestCase
 from cms.test_utils.util.menu_extender import TestMenu
 from cms.tests.test_apphooks import APP_MODULE, APP_NAME
+from menus.menu_pool import menu_pool
 
 
 def _grant_page_permission(user, codename):
@@ -42,38 +39,6 @@ class PythonAPITests(CMSTestCase):
             'language': 'en'
         }
 
-    def test_generate_valid_slug(self):
-        title = "Hello Title"
-        expected_slug = "hello-title"
-        # empty db, it should just slugify
-        slug = generate_valid_slug(title, None, 'en')
-        self.assertEqual(slug, expected_slug)
-
-    def test_generage_valid_slug_check_existing(self):
-        title = "Hello Title"
-        create_page(title, 'nav_playground.html', 'en')
-        # second time with same title, it should append -1
-        expected_slug = "hello-title-1"
-        slug = generate_valid_slug(title, None, 'en')
-        self.assertEqual(slug, expected_slug)
-
-    def test_generage_valid_slug_check_parent(self):
-        title = "Hello Title"
-        page = create_page(title, 'nav_playground.html', 'en')
-        # second time with same title, it should append -1
-        expected_slug = "hello-title"
-        slug = generate_valid_slug(title, page, 'en')
-        self.assertEqual(slug, expected_slug)
-
-    def test_generage_valid_slug_check_parent_existing(self):
-        title = "Hello Title"
-        page = create_page(title, 'nav_playground.html', 'en')
-        create_page(title, 'nav_playground.html', 'en', parent=page)
-        # second time with same title, it should append -1
-        expected_slug = "hello-title-1"
-        slug = generate_valid_slug(title, page, 'en')
-        self.assertEqual(slug, expected_slug)
-
     def test_invalid_apphook_type(self):
         self.assertRaises(TypeError, create_page, apphook=1,
                           **self._get_default_create_page_arguments())
@@ -90,7 +55,7 @@ class PythonAPITests(CMSTestCase):
         if APP_MODULE in sys.modules:
             del sys.modules[APP_MODULE]
         apphooks = (
-            '%s.%s' % (APP_MODULE, APP_NAME),
+            f'{APP_MODULE}.{APP_NAME}',
         )
 
         with self.settings(CMS_APPHOOKS=apphooks):
@@ -99,12 +64,6 @@ class PythonAPITests(CMSTestCase):
             page = create_page(apphook=apphook,
                                **self._get_default_create_page_arguments())
             self.assertEqual(page.get_application_urls('en'), APP_NAME)
-
-    def test_invalid_dates(self):
-        self.assertRaises(AssertionError, create_page, publication_date=1,
-                          **self._get_default_create_page_arguments())
-        self.assertRaises(AssertionError, create_page, publication_end_date=1,
-                          **self._get_default_create_page_arguments())
 
     def test_nav_extenders_invalid_type(self):
         if not menu_pool.discovered:
@@ -197,20 +156,17 @@ class PythonAPITests(CMSTestCase):
 
     def test_page_overwrite_url_default(self):
         self.assertEqual(Page.objects.all().count(), 0)
-        home = create_page('home', 'nav_playground.html', 'en', published=True)
-        self.assertTrue(home.is_published('en', True))
-        self.assertTrue(home.is_home)
+        home = create_page('root', 'nav_playground.html', 'en')
+        self.assertFalse(home.is_home)
         page = create_page(**self._get_default_create_page_arguments())
         self.assertFalse(page.is_home)
-        self.assertFalse(page.get_title_obj_attribute('has_url_overwrite'))
-        self.assertEqual(page.get_title_obj_attribute('path'), 'test')
+        self.assertTrue(page.get_urls().filter(path='test', managed=True).exists())
 
     def test_create_page_can_overwrite_url(self):
         page_attrs = self._get_default_create_page_arguments()
         page_attrs["overwrite_url"] = 'test/home'
         page = create_page(**page_attrs)
-        self.assertTrue(page.get_title_obj_attribute('has_url_overwrite'))
-        self.assertEqual(page.get_title_obj_attribute('path'), 'test/home')
+        self.assertTrue(page.get_urls().filter(path='test/home', managed=False).exists())
 
     def test_create_page_atomic(self):
         # Ref: https://github.com/divio/django-cms/issues/5652
@@ -225,42 +181,144 @@ class PythonAPITests(CMSTestCase):
         # Instead, we delay the loading of the template until after the save is executed.
         page_attrs["template"] = TEMPLATE_INHERITANCE_MAGIC
 
-        self.assertFalse(Page.objects.filter(template=TEMPLATE_INHERITANCE_MAGIC).exists())
+        self.assertFalse(Page.objects.filter(pagecontent_set__template=TEMPLATE_INHERITANCE_MAGIC).exists())
 
         with self.settings(CMS_TEMPLATES=[("col_invalid.html", "notvalid")]):
             self.assertRaises(TemplateSyntaxError, create_page, **page_attrs)
             # The template raised an exception which should cause the database to roll back
             # instead of committing a page in a partial state.
-            self.assertFalse(Page.objects.filter(template=TEMPLATE_INHERITANCE_MAGIC).exists())
+            self.assertFalse(Page.objects.filter(pagecontent_set__template=TEMPLATE_INHERITANCE_MAGIC).exists())
 
     def test_create_reverse_id_collision(self):
-        create_page('home', 'nav_playground.html', 'en', published=True, reverse_id="foo")
-        self.assertRaises(FieldError, create_page, 'foo', 'nav_playground.html', 'en', published=True, reverse_id="foo")
+        create_page('home', 'nav_playground.html', 'en', reverse_id="foo")
+        self.assertRaises(FieldError, create_page, 'foo', 'nav_playground.html', 'en', reverse_id="foo")
         self.assertTrue(Page.objects.count(), 2)
 
-    def test_publish_page(self):
-        page_attrs = self._get_default_create_page_arguments()
-        page_attrs['language'] = 'en'
-        page_attrs['published'] = False
-        page = create_page(**page_attrs)
-        self.assertFalse(page.is_published('en'))
-        self.assertEqual(page.changed_by, 'script')
-        user = get_user_model().objects.create_user(username='user', email='user@django-cms.org',
-                                                    password='user')
-        # Initially no permission
-        self.assertRaises(PermissionDenied, publish_page, page, user, 'en')
-        user.is_staff = True
-        user.save()
-        # Permissions are cached on user instances, so create a new one.
-        user = get_user_model().objects.get(pk=user.pk)
 
-        self.add_permission(user, 'change_page')
-        self.add_permission(user, 'publish_page')
+class PythonAPIPluginTests(CMSTestCase):
 
-        gpp = GlobalPagePermission.objects.create(user=user, can_change=True, can_publish=True)
-        gpp.sites.add(page.site)
-        publish_page(page, user, 'en')
-        # Reload the page to get updates.
-        page = page.reload()
-        self.assertTrue(page.is_published('en'))
-        self.assertEqual(page.changed_by, user.get_username())
+    def setUp(self):
+        self.placeholder = Placeholder.objects.create(slot='main')
+
+    def test_add_root_plugin(self):
+        root_plugin_1 = add_plugin(self.placeholder, 'SolarSystemPlugin', 'en')
+        self.assertEqual(root_plugin_1.position, 1)
+        self.assertEqual(root_plugin_1.language, 'en')
+        self.assertEqual(root_plugin_1.plugin_type, 'SolarSystemPlugin')
+
+    def test_add_root_plugin_first(self):
+        """
+        User can add a new plugin to be in the first position
+        """
+        root_plugin_2 = add_plugin(self.placeholder, 'SolarSystemPlugin', 'en')
+        root_plugin_3 = add_plugin(self.placeholder, 'SolarSystemPlugin', 'en', position='last-child')
+        root_plugin_1 = add_plugin(self.placeholder, 'SolarSystemPlugin', 'en', position='first-child')
+        new_tree = self.placeholder.get_plugins('en').values_list('pk', 'position')
+        expected = [(root_plugin_1.pk, 1), (root_plugin_2.pk, 2), (root_plugin_3.pk, 3)]
+        self.assertSequenceEqual(new_tree, expected)
+
+    def test_add_root_plugin_middle(self):
+        root_plugin_1 = add_plugin(self.placeholder, 'SolarSystemPlugin', 'en')
+        root_plugin_2 = add_plugin(self.placeholder, 'SolarSystemPlugin', 'en', position='last-child')
+        root_plugin_4 = add_plugin(self.placeholder, 'SolarSystemPlugin', 'en', position='last-child')
+        root_plugin_6 = add_plugin(self.placeholder, 'SolarSystemPlugin', 'en', position='last-child')
+        root_plugin_3 = add_plugin(self.placeholder, 'SolarSystemPlugin', 'en', position='left', target=root_plugin_4)
+        root_plugin_5 = add_plugin(
+            self.placeholder, 'SolarSystemPlugin', 'en', position='right', target=root_plugin_4.reload()
+        )
+        new_tree = self.placeholder.get_plugins('en').values_list('pk', 'position')
+        expected = [
+            (root_plugin_1.pk, 1),
+            (root_plugin_2.pk, 2),
+            (root_plugin_3.pk, 3),
+            (root_plugin_4.pk, 4),
+            (root_plugin_5.pk, 5),
+            (root_plugin_6.pk, 6),
+        ]
+        self.assertSequenceEqual(new_tree, expected)
+
+    def test_add_child_plugin(self):
+        root_plugin_1 = add_plugin(self.placeholder, 'SolarSystemPlugin', 'en')
+        child_plugin_1 = add_plugin(self.placeholder, 'SolarSystemPlugin', 'en', target=root_plugin_1)
+        self.assertEqual(child_plugin_1.position, 2)
+        self.assertEqual(child_plugin_1.parent_id, root_plugin_1.pk)
+        self.assertEqual(child_plugin_1.language, 'en')
+        self.assertEqual(child_plugin_1.plugin_type, 'SolarSystemPlugin')
+
+    def test_add_child_plugin_first(self):
+        """
+        User can add a new plugin to be in the first position
+        """
+        root_plugin_1 = add_plugin(self.placeholder, 'SolarSystemPlugin', 'en')
+        child_plugin_2 = add_plugin(
+            self.placeholder, 'SolarSystemPlugin', 'en', position='last-child', target=root_plugin_1
+        )
+        child_plugin_3 = add_plugin(
+            self.placeholder, 'SolarSystemPlugin', 'en', position='last-child', target=root_plugin_1
+        )
+        child_plugin_1 = add_plugin(
+            self.placeholder, 'SolarSystemPlugin', 'en', position='first-child', target=root_plugin_1
+        )
+        root_plugin_2 = add_plugin(self.placeholder, 'SolarSystemPlugin', 'en')
+        new_tree = self.placeholder.get_plugins('en').values_list('pk', 'position')
+        expected = [
+            (root_plugin_1.pk, 1),
+            (child_plugin_1.pk, 2),
+            (child_plugin_2.pk, 3),
+            (child_plugin_3.pk, 4),
+            (root_plugin_2.pk, 5),
+        ]
+        self.assertSequenceEqual(new_tree, expected)
+
+    def test_add_child_plugin_middle(self):
+        root_plugin_1 = add_plugin(self.placeholder, 'SolarSystemPlugin', 'en')
+        child_plugin_1 = add_plugin(
+            self.placeholder, 'SolarSystemPlugin', 'en', position='last-child', target=root_plugin_1
+        )
+        child_plugin_2 = add_plugin(
+            self.placeholder, 'SolarSystemPlugin', 'en', position='last-child', target=root_plugin_1
+        )
+        child_plugin_4 = add_plugin(
+            self.placeholder, 'SolarSystemPlugin', 'en', position='last-child', target=root_plugin_1
+        )
+        child_plugin_6 = add_plugin(
+            self.placeholder, 'SolarSystemPlugin', 'en', position='last-child', target=root_plugin_1
+        )
+        child_plugin_3 = add_plugin(
+            self.placeholder, 'SolarSystemPlugin', 'en', position='left', target=child_plugin_4
+        )
+        child_plugin_5 = add_plugin(
+            self.placeholder, 'SolarSystemPlugin', 'en', position='right', target=child_plugin_4.reload()
+        )
+        root_plugin_3 = add_plugin(self.placeholder, 'SolarSystemPlugin', 'en', position='last-child')
+        new_tree = self.placeholder.get_plugins('en').values_list('pk', 'position')
+        expected = [
+            (root_plugin_1.pk, 1),
+            (child_plugin_1.pk, 2),
+            (child_plugin_2.pk, 3),
+            (child_plugin_3.pk, 4),
+            (child_plugin_4.pk, 5),
+            (child_plugin_5.pk, 6),
+            (child_plugin_6.pk, 7),
+            (root_plugin_3.pk, 8),
+        ]
+        self.assertSequenceEqual(new_tree, expected)
+
+        # Insert additional plugin right of first root plugin to see where it is positioned relative to the
+        # first root plugin's children
+        root_plugin_2 = add_plugin(
+            self.placeholder, 'SolarSystemPlugin', 'en', position='right', target=root_plugin_1
+        )
+        new_tree = self.placeholder.get_plugins('en').values_list('pk', 'position')
+        expected = [
+            (root_plugin_1.pk, 1),
+            (child_plugin_1.pk, 2),
+            (child_plugin_2.pk, 3),
+            (child_plugin_3.pk, 4),
+            (child_plugin_4.pk, 5),
+            (child_plugin_5.pk, 6),
+            (child_plugin_6.pk, 7),
+            (root_plugin_2.pk, 8),
+            (root_plugin_3.pk, 9),
+        ]
+        self.assertSequenceEqual(new_tree, expected)

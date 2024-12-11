@@ -9,6 +9,19 @@
     background: $white;
     vertical-align: top;
 }
+.cms-btn {
+    .cms-pagetree-node-state {
+        vertical-align: middle;
+        margin-right: 5px;
+        margin-top: -4px;
+    }
+    &:hover {
+        .cms-pagetree-node-state-dirty {
+            box-shadow: 0 0 0 1px white;
+        }
+    }
+}
+
 .cms-pagetree-node-state {
     &-empty {
         border-color: $gray-light;
@@ -19,14 +32,26 @@
         border-color: $gray-light;
         background-color: $gray-light;
     }
-    &-published {
+   &-archived {
+        border-color: $gray-light;
+        background-color: $gray-lighter;
+    }
+    &-published, &-public {
         border-color: $color-success;
         background-color: $color-success;
+    }
+    &-draft {
+        border-color: $color-primary;
+        background-color: $white;
     }
     &-dirty {
         animation: pulsate 2.5s ease-out infinite;
         border-color: $color-primary;
         background-color: $color-primary;
+    }
+    &-deletion {
+        border-color: $color-danger;
+        background-color: $color-danger;
     }
 }
 

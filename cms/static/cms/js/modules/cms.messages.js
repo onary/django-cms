@@ -2,8 +2,8 @@
  * Copyright https://github.com/divio/django-cms
  */
 
-var $ = require('jquery');
-var Class = require('classjs');
+import $ from 'jquery';
+import Class from 'classjs';
 
 /**
  * Displays a message underneath the toolbar.
@@ -12,10 +12,10 @@ var Class = require('classjs');
  * @namespace CMS
  */
 var Messages = new Class({
-
     options: {
         messageDuration: 300,
-        messageDelay: 3000
+        messageDelay: 3000,
+        messageLength: 160
     },
 
     initialize: function initialize(options) {
@@ -55,6 +55,7 @@ var Messages = new Class({
      * @param {Number} [opts.delay=this.options.messageDelay] delay until message is closed, 0 leaves it open
      * @param {Boolean} [opts.error] if true sets the style to `.cms-messages-error`
      */
+    // eslint-disable-next-line complexity
     open: function open(opts) {
         if (!(opts && opts.message)) {
             throw new Error('The arguments passed to "open" were invalid.');
@@ -63,9 +64,9 @@ var Messages = new Class({
         var that = this;
 
         var msg = opts.message;
-        var dir = opts.dir === undefined ? 'center' : opts.dir;
-        var delay = opts.delay === undefined ? this.options.messageDelay : opts.delay;
-        var error = opts.error === undefined ? false : opts.error;
+        var dir = opts.dir || 'center';
+        var delay = opts.delay || this.options.messageDelay;
+        var error = opts.error || false;
 
         var width = 320;
         var height = this.ui.messages.outerHeight(true);
@@ -85,7 +86,7 @@ var Messages = new Class({
         clearTimeout(this.timer);
 
         close.hide();
-        close.off(this.click).on(this.click, function () {
+        close.off(this.click).on(this.click, function() {
             that.close();
         });
 
@@ -101,37 +102,37 @@ var Messages = new Class({
         switch (dir) {
             case 'left':
                 this.ui.messages.css({
-                    'top': top,
-                    'left': -width,
-                    'right': 'auto',
+                    top: top,
+                    left: -width,
+                    right: 'auto',
                     'margin-left': 0
                 });
                 this.ui.messages.animate({ left: 0 });
                 break;
             case 'right':
                 this.ui.messages.css({
-                    'top': top,
-                    'right': -width,
-                    'left': 'auto',
+                    top: top,
+                    right: -width,
+                    left: 'auto',
                     'margin-left': 0
                 });
                 this.ui.messages.animate({ right: 0 });
                 break;
             default:
                 this.ui.messages.css({
-                    'left': '50%',
-                    'right': 'auto',
+                    left: '50%',
+                    right: 'auto',
                     'margin-left': -(width / 2)
                 });
                 this.ui.messages.animate({ top: top });
         }
 
         // cancel autohide if delay is <= 0
-        if (delay <= 0) {
+        if (delay <= 0 || msg.length > this.options.messageLength) {
             close.show();
         } else {
             // add delay to hide if delay > 0
-            this.timer = setTimeout(function () {
+            this.timer = setTimeout(function() {
                 that.close();
             }, delay);
         }
@@ -145,7 +146,6 @@ var Messages = new Class({
     close: function close() {
         this.ui.messages.fadeOut(this.options.messageDuration);
     }
-
 });
 
-module.exports = Messages;
+export default Messages;

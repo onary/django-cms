@@ -1,28 +1,20 @@
-# -*- coding: utf-8 -*-
 import re
 
-from django.contrib.sites.models import SITE_CACHE, Site
-from django.utils.timezone import get_current_timezone_name
-# from django.utils.translation import force_text
 from django.utils.encoding import force_str
-
-from .compat.dj import is_installed
-
-
-SITE_VAR = "site__exact"
+from django.utils.timezone import get_current_timezone_name
 
 
 def find_placeholder_relation(obj):
     return 'page'
 
 
-class classproperty(object):
+class classproperty:
     """Like @property, but for classes, not just instances.
 
     Example usage:
 
         >>> from cms.utils.helpers import classproperty
-        >>> class A(object):
+        >>> class A():
         ...     @classproperty
         ...     def x(cls):
         ...         return 'x'
@@ -47,26 +39,9 @@ class classproperty(object):
         return self.fget(owner_cls)
 
 
-def current_site(request):
-    site_pk = request.GET.get(SITE_VAR, None) or request.POST.get(SITE_VAR, None)
-
-    if not site_pk:
-        site_pk = request.session.get('cms_admin_site', None)
-
-    if site_pk:
-        try:
-            site = SITE_CACHE.get(site_pk) or Site.objects.get(pk=site_pk)
-            SITE_CACHE[site_pk] = site
-            return site
-        except Site.DoesNotExist:
-            return Site.objects.get_current(request)
-    else:
-        return Site.objects.get_current(request)
-
-
 def normalize_name(name):
     """
-    Converts camel-case style names into underscore seperated words. Example::
+    Converts camel-case style names into underscore separated words. Example::
 
         >>> normalize_name('oneTwoThree')
         'one_two_three'
@@ -86,10 +61,9 @@ def get_header_name(name):
     CONTENT_LENGTH.
     """
     uc_name = re.sub(r'\W+', '_', force_str(name)).upper()
-    if (uc_name in ['CONTENT_LENGTH', 'CONTENT_TYPE'] or
-            uc_name.startswith('HTTP_')):
+    if uc_name in ['CONTENT_LENGTH', 'CONTENT_TYPE'] or uc_name.startswith('HTTP_'):
         return uc_name
-    return 'HTTP_{0}'.format(uc_name)
+    return f'HTTP_{uc_name}'
 
 
 def get_timezone_name():
@@ -108,30 +82,30 @@ def get_timezone_name():
     return tz_name.encode('ascii', 'ignore').decode('ascii').replace(' ', '_')
 
 
-def reversion_register(model_class, fields=None, follow=(), format="json", exclude_fields=None):
-    """CMS interface to reversion api - helper function. Registers model for
-    reversion only if reversion is available.
-
-    Auto excludes publisher fields.
+def is_editable_model(model_class):
     """
+    Return True if the model_class is editable.
+    Checks whether the model_class has any relationships with Placeholder.
+    If not, checks whether the model_class has an admin class
+    and is inherited by FrontendEditableAdminMixin.
+    :param model_class: The model class
+    :return: Boolean
+    """
+    from django.contrib import admin
 
-    #FIXME: Remove this when integrating djangocms-reversion
-    # reversion's merely recommended, not required
-    if not is_installed('reversion'):
-        return
+    from cms.admin.placeholderadmin import FrontendEditableAdminMixin
+    from cms.models.placeholdermodel import Placeholder
 
-    if fields and exclude_fields:
-        raise ValueError("Just one of fields, exclude_fields arguments can be passed.")
+    # First check whether model_class has
+    # any fields which has a relation to Placeholder
+    for field in model_class._meta.get_fields():
+        if field.related_model == Placeholder:
+            return True
 
-    opts = model_class._meta
-    local_fields = opts.local_fields + opts.local_many_to_many
-
-    if fields is None:
-        fields = [field.name for field in local_fields]
-
-    exclude_fields = exclude_fields or []
-
-    fields = filter(lambda name: not name in exclude_fields, fields)
-
-    from cms.utils import reversion_hacks
-    reversion_hacks.register_draft_only(model_class, fields, follow, format)
+    # Check whether model_class has an admin class
+    # and whether its inherited from FrontendEditableAdminMixin
+    try:
+        admin_class = admin.site._registry[model_class]
+    except KeyError:
+        return False
+    return isinstance(admin_class, FrontendEditableAdminMixin)

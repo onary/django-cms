@@ -63,5 +63,5 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RunPython(set_plugin_absolute_position, migrations.RunPython.noop),
+        migrations.RunPython(set_plugin_absolute_position),
     ]

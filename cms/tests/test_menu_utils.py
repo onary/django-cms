@@ -1,13 +1,20 @@
 from django.http import HttpResponse
 
+from cms.api import create_page, create_page_content
 from cms.test_utils.testcases import CMSTestCase
 from cms.test_utils.util.mock import AttributeObject
+from cms.utils.i18n import get_language_list
 from menus.templatetags.menu_tags import PageLanguageUrl
-from menus.utils import find_selected, language_changer_decorator
+from menus.utils import (
+    DefaultLanguageChanger,
+    find_selected,
+    language_changer_decorator,
+)
 
 
 class DumbPageLanguageUrl(PageLanguageUrl):
-    def __init__(self): pass
+    def __init__(self):
+        pass
 
 
 class MenuUtilsTests(CMSTestCase):
@@ -27,20 +34,31 @@ class MenuUtilsTests(CMSTestCase):
         self.assertContains(response, '<h1>/fr/sample/login3/</h1>')
 
     def test_default_language_changer(self):
-        view = self.get_simple_view()
-        # check we maintain the view name
-        self.assertEqual(view.__name__, view.__name__)
-        request = self.get_request('/en/', 'en')
-        response = view(request)
-        self.assertEqual(response.content, b'')
-        fake_context = {'request': request}
-        tag = DumbPageLanguageUrl()
-        output = tag.get_context(fake_context, 'en')
-        url = output['content']
-        self.assertEqual(url, '/en/')
-        output = tag.get_context(fake_context, 'ja')
-        url = output['content']
-        self.assertEqual(url, '/ja/')
+        """
+        The DefaultLanguageChanger should not try to resolve the url
+        for languages not configured.
+        """
+        cms_page = create_page('en-page', 'nav_playground.html', 'en')
+
+        for language in get_language_list(site_id=1):
+            if language not in ('en', 'pt-br', 'es-mx'):
+                create_page_content(language, '%s-page' % language, cms_page)
+
+        request = self.get_request(
+            path=cms_page.get_absolute_url(),
+            language='en',
+            page=cms_page,
+        )
+        urls_expected = [
+            '/en/en-page/',
+            '/de/de-page/',
+            '/fr/fr-page/',
+            '/en/en-page/',  # the pt-br url is en because that's a fallback
+            '/en/en-page/',  # the es-mx url is en because that's a fallback
+        ]
+        urls_found = [DefaultLanguageChanger(request)(code)
+                      for code in get_language_list(site_id=1)]
+        self.assertSequenceEqual(urls_expected, urls_found)
 
     def test_language_changer_decorator(self):
         def lang_changer(lang):

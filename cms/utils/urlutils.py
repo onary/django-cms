@@ -1,15 +1,12 @@
-# -*- coding: utf-8 -*-
 import re
+from urllib.parse import urlparse
 
 from django.conf import settings
 from django.urls import reverse
 from django.utils.encoding import force_str
 from django.utils.http import urlencode
-from six.moves.urllib.parse import urlparse
 
-# import cms
-from cms.workaround import __version__
-
+import cms
 from cms.utils.conf import get_cms_setting
 
 # checks validity of absolute / relative url
@@ -50,7 +47,7 @@ def urljoin(*segments):
     >>> urljoin('/a', '')
     u'/a/'
     """
-    url  = '/' if segments[0].startswith('/') else ''
+    url = '/' if segments[0].startswith('/') else ''
     url += '/'.join(filter(None, (force_str(s).strip('/') for s in segments)))
     return url + '/' if settings.APPEND_SLASH else url
 
@@ -75,7 +72,7 @@ def static_with_version(path):
     """
     path_re = re.compile('(.*)/([^/]*$)')
 
-    return re.sub(path_re, r'\1/%s/\2' % (__version__), path)
+    return re.sub(path_re, r'\1/%s/\2' % (cms.__version__), path)
 
 
 def add_url_parameters(url, *args, **params):
@@ -89,7 +86,7 @@ def add_url_parameters(url, *args, **params):
     for arg in args:
         params.update(arg)
     if params:
-        return '%s?%s' % (url, urlencode(params))
+        return f"{url}?{urlencode(params)}"
     return url
 
 
@@ -99,9 +96,9 @@ def admin_reverse(viewname, urlconf=None, args=None, kwargs=None, prefix=None,
     if ':' in viewname:
         raise ValueError(
             "viewname in admin_reverse may not already have a namespace "
-            "defined: {0!r}".format(viewname)
+            f"defined: {viewname!r}"
         )
-    viewname = "{0}:{1}".format(admin_namespace, viewname)
+    viewname = f"{admin_namespace}:{viewname}"
     return reverse(
         viewname,
         urlconf=urlconf,

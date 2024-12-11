@@ -1,5 +1,6 @@
 //##############################################################################
 // TOOLBAR
+@use "sass:math";
 
 .cms-toolbar {
     position: fixed;
@@ -8,53 +9,64 @@
     right: 0;
     z-index: z(toolbar, base);
     min-height: $toolbar-height;
-    margin-top: -$toolbar-height - 10px;
-    border-bottom: 1px solid $toolbar-border !important;
+    margin-top: 0;
     background-color: $white;
-    box-shadow: $toolbar-shadow;
     backface-visibility: hidden;
-
-    .cms-toolbar-expanded & {
-        margin-top: 0;
+    &:after {
+        position: absolute;
+        content: '';
+        box-shadow: $toolbar-shadow;
+        top: 100%;
+        left: 0;
+        right: 0;
+        height: 1px;
+        margin-top: -1px;
+        z-index: z(default);
+        clip: rect(0, auto, 10px, 0);
+        background: $toolbar-border !important;
+        @at-root .cms-structure-mode-structure & {
+            inset-inline-end: $toolbar-height - 1px;
+        }
     }
 
     .cms-toolbar-left {
         position: absolute;
-        left: 0;
+        inset-inline-start: 0;
         top: 0;
-        z-index: z(toolbar, left);
+        z-index: z(toolbar, inset-inline-start);
     }
     .cms-toolbar-right {
         position: absolute;
-        right: 0;
+        inset-inline-end: 0;
         top: 0;
-        z-index: z(toolbar, right);
-        padding-right: $toolbar-trigger-width + 2px;
+        z-index: z(toolbar, inset-inline-end);
+        padding-inline-end:$toolbar-height;
     }
 
     .cms-toolbar-left .cms-toolbar-item {
-        margin-right: $toolbar-left-space;
+        margin-inline-end: $toolbar-left-space;
         &:last-child {
-            margin-right: 0;
+            margin-inline-end: 0;
         }
     }
     .cms-toolbar-right .cms-toolbar-item {
-        margin-right: $toolbar-right-space;
+        margin-inline-end: $toolbar-right-space;
     }
 
     // items
     .cms-toolbar-item {
         float: left;
+        &:dir(rtl) {
+            float: right;
+        }
     }
 }
+
 
 @at-root .cms-toolbar-non-sticky {
     position: static !important;
     .cms .cms-toolbar {
         position: absolute;
-    }
-    .cms.cms-toolbar-debug .cms-toolbar {
-        margin-top: -$toolbar-debug-height !important;
     }
 }
 
@@ -62,28 +74,31 @@
 //###########################################################
 // #TOOLBAR/debug#
 &.cms-toolbar-debug {
-    .cms-toolbar {
-        top: $toolbar-debug-height !important;
-    }
-    .cms-toolbar-trigger {
-        top: $toolbar-debug-height !important;
-    }
-
     .cms-debug-bar {
-        position: fixed;
-        top: 0;
+        position: absolute;
         left: 0;
+        right: 0;
+        top: 0;
         z-index: z(debug);
-        width: 100%;
         height: $toolbar-debug-height;
-        border-bottom: 1px solid $gray-lighter;
         background-color: $toolbar-debug-bgcolor;
-        background-image: linear-gradient($gradient-striped-dark);
-        background-size: $toolbar-debug-bgsize;
+        z-index: 30;
+
+        @at-root .cms-structure-mode-structure & {
+            inset-inline-end: $toolbar-height;
+        }
     }
-}
-&.cms-toolbar-debug #container {
-    padding-top: $toolbar-height + $toolbar-debug-height !important;
+    .cms-toolbar .cms-btn-action {
+        background-color: $toolbar-debug-bgcolor;
+        border-color: $toolbar-debug-bgcolor;
+        color: black;
+        &:active,
+        &:focus {
+            background-color: $toolbar-debug-bgcolor;
+            border-color: $toolbar-debug-bgcolor;
+            color: black;
+        }
+    }
 }
 
 //###########################################################
@@ -92,9 +107,15 @@
     li {
         position: relative;
         float: left;
+        &:dir(rtl) {
+            float: right;
+        }
     }
     li a {
         float: left;
+        &:dir(rtl) {
+            float: right;
+        }
         color: $toolbar-menu-item-color;
         padding: $toolbar-menu-item-padding;
         line-height: $toolbar-height;
@@ -111,8 +132,8 @@
         display: none;
         position: absolute;
         top: 50%;
-        right: 7px;
-        margin-top: -($toolbar-dropdown-item-icon-size / 2);
+        inset-inline-end: 7px;
+        margin-top: math.div(-$toolbar-dropdown-item-icon-size, 2);
         font-size: $toolbar-dropdown-item-icon-size;
         transform: rotate(180deg);
     }
@@ -123,7 +144,7 @@
             display: block;
             position: absolute;
             top: $toolbar-height;
-            left: 0;
+            inset-inline-start: 0;
             min-width: $toolbar-dropdown-min-width;
             padding: $toolbar-dropdown-padding;
             border: 1px solid $white;
@@ -154,7 +175,7 @@
             ul {
                 display: none;
                 top: -(nth($toolbar-dropdown-padding, 1) + 1px);
-                left: 100%;
+                inset-inline-start: 100%;
             }
             > a {
                 cursor: default;
@@ -163,6 +184,10 @@
                 display: block;
                 .cms-icon {
                     display: block;
+                    &:dir(rtl) {
+                        // undo arrow rotation for RTL
+                        transform: rotate(0deg);
+                    }
                 }
 
             }
@@ -216,6 +241,12 @@
 
     .cms-toolbar-item {
         float: none;
+        [dir="rtl"] & {
+            // a bit weird, but if removed, it will best match
+            // with [dir="rtl"] div.cms .cms-toolbar .cms-toolbar-item
+            // and will float to the right
+            float: none;
+        }
         margin: $toolbar-menu-item-padding !important;
         overflow: hidden;
         margin-top: 5px;
@@ -223,6 +254,9 @@
     }
     .cms-toolbar-item-cms-mode-switcher a {
         float: left !important;
+        &:dir(rtl) {
+            float: right !important;
+        }
         width: 50%;
     }
     .cms-toolbar-item-buttons {
@@ -241,14 +275,15 @@
         padding-top: 8px;
         border-top: 1px solid $gray-lighter;
     }
+    .cms-toolbar-item-dark-mode-toggle {
+        display: none;
+    }
 }
 .cms-toolbar-item-navigation .cms-toolbar-item-navigation-hover .cms-more-dropdown-full {
     position: fixed;
     width: 100%;
     // 100vw is better because if the user's content exceeds the viewport width
     // the dropdown will also go out of the screen, which is not ideal, esp. on mobile
-    // technically we should also adapt toolbar trigger, but it would involve calc
-    // which is not very performant.
     width: 100vw;
     top: $toolbar-height;
     bottom: 0;
@@ -283,19 +318,64 @@
         border: none;
         box-shadow: none;
         position: relative;
-        left: 0;
+        inset-inline-start: 0;
         top: 0;
         border-radius: 0;
-        margin-left: 20px;
+        margin-inline-start:20px;
     }
 }
-&.cms-toolbar-debug .cms-toolbar-item-navigation .cms-toolbar-item-navigation-hover .cms-more-dropdown-full {
-    top: $toolbar-height + $toolbar-debug-height;
-}
 .cms-toolbar-item-cms-mode-switcher {
-    display: none;
+    // display: none;
+    position: absolute;
+    inset-inline-end: 0;
+    top: 0;
+    width: $toolbar-height;
+    height: $toolbar-height;
+    margin-inline-end:0 !important;
+
+    .cms-btn {
+        position: absolute;
+        inset-inline-end: 0;
+        top: 0;
+        border-top: 0 !important;
+        border-right: 0 !important;
+        width: $toolbar-height;
+        height: $toolbar-height - 1px;
+        display: block;
+        border-radius: 0;
+        border-bottom: 0;
+        clip: rect(0, $toolbar-height, $toolbar-height, 0px);
+        .cms-icon {
+            position: absolute;
+            inset-inline-start: math.div($toolbar-height, 2);
+            top: math.div($toolbar-height, 2);
+            margin-inline-start:-10px;
+            margin-top: -9px;
+            font-size: 20px !important;
+        }
+        &.cms-btn-active {
+            height: $toolbar-height;
+            &,
+            &:active,
+            &:focus {
+                border-color: $toolbar-border !important;
+                background-color: $structure-bgcolor !important;
+            }
+        }
+    }
 }
 
+@at-root .cms-structure-mode-endpoint.cms-structure-mode-structure & {
+    .cms-toolbar-item-cms-mode-switcher {
+        display: none;
+    }
+    .cms-toolbar-right {
+        padding-inline-end: 0;
+    }
+    .cms-toolbar::after, .cms-debug-bar {
+        inset-inline-end: 0;
+    }
+}
 //###########################################################
 // #TOOLBAR/dialog#
 .cms-messages {
@@ -312,7 +392,7 @@
     margin: 0;
     padding: $messages-padding;
     border-radius: 0 0 $messages-border-radius $messages-border-radius;
-    background: rgba($messages-bgcolor, 0.74);
+    background: $messages-bgcolor;
     transition: top $speed-base;
     * {
         color: $messages-color;
@@ -328,7 +408,8 @@
         text-decoration: underline;
     }
     strong {
-        color: lighten($color-primary, 10%);
+        color: $color-primary;
+        filter: brightness(1.1);
         font-weight: $messages-font-weight;
     }
     ul {
@@ -345,10 +426,13 @@
         cursor: pointer;
         display: none;
         float: right;
+        &:dir(rtl) {
+            float: left;
+        }
         position: relative;
         width: $messages-close-area-size;
         height: $messages-line-height;
-        text-align: right;
+        text-align: end;
         span {
             font-size: $messages-close-icon-size;
         }
@@ -360,24 +444,22 @@
 .cms-messages-error strong {
     color: $color-danger;
 }
-&.cms-toolbar-debug .cms-messages {
-    margin-top: $toolbar-debug-height;
-}
 
 //###########################################################
 // #TOOLBAR/elements/logo#
 .cms-toolbar-item-logo {
-    margin-right: 0 !important;
+    margin-inline-end:0 !important;
 
     a {
         @extend .cms-icon;
         @extend .cms-icon-logo;
+        color: $black;
         font-size: $toolbar-logo-height;
         line-height: $toolbar-height;
         height: $toolbar-height;
         transition: color $speed-base;
-        padding-left: $toolbar-left-space;
-        padding-right: $toolbar-left-space;
+        padding-inline-start:$toolbar-left-space;
+        padding-inline-end:$toolbar-left-space;
 
         span {
             display: none;
@@ -397,7 +479,7 @@
         display: inline-block;
         vertical-align: middle;
         line-height: $toolbar-height;
-        padding-left: $toolbar-left-space;
+        padding-inline-start:$toolbar-left-space;
         margin: 0;
         cursor: pointer;
     }
@@ -446,7 +528,7 @@
 
     // overlap with logo when it gets too small
     @media (max-width: $screen-tablet - 280px) {
-        margin-left: -110px;
+        margin-inline-start:-110px;
     }
     // mobile only
     @media (max-width: $screen-tablet) {
@@ -458,12 +540,12 @@
         label {
             position: relative;
             padding: 0;
-            margin-right: -1px;
+            margin-inline-end:-1px;
             margin-bottom: -1px;
         }
         label span {
             position: absolute;
-            left: 5px;
+            inset-inline-start: 5px;
             top: 0;
             z-index: 1;
             color: $gray-light;
@@ -487,18 +569,21 @@
         }
         input[type="submit"] {
             border-radius: 0 $border-radius-base $border-radius-base 0;
-            padding: 0 $login-form-submit-padding-horizontal / 2;
+            padding: 0 math.div($login-form-submit-padding-horizontal, 2);
         }
     }
 }
 
 // #TOOLBAR/elements/buttongroups#
 .cms-toolbar-item-buttons {
-    $margin: ($toolbar-height - $toolbar-button-height) / 2;
+    $margin: math.div($toolbar-height - $toolbar-button-height, 2);
     margin: $margin 0 $margin;
 
     a {
         float: left;
+        &:dir(rtl) {
+            float: right;
+        }
         line-height: $toolbar-button-height;
         height: $toolbar-button-height;
         font-size: $toolbar-button-font-size;
@@ -508,76 +593,11 @@
         border-radius: $toolbar-button-border-radius 0 0 $toolbar-button-border-radius;
     }
     a:last-child {
+        margin-inline-start:-1px;
         border-radius: 0 $toolbar-button-border-radius $toolbar-button-border-radius 0;
     }
     a:only-child {
         border-radius: $toolbar-button-border-radius;
-    }
-}
-
-// #TOOLBAR/elements/toggler#
-.cms-toolbar-trigger {
-    position: fixed;
-    top: 0;
-    right: 0;
-    z-index: z(toolbar-trigger);
-    border-bottom: 1px solid $toolbar-border;
-    border-left: 1px solid $toolbar-border;
-    background: $white;
-
-    a {
-        display: block;
-        width: $toolbar-trigger-width;
-        height: $toolbar-trigger-height - 1px;
-        text-align: center;
-        border-top: 1px solid $white;
-        border-left: 1px solid $white;
-        background: $white;
-        &:hover {
-            background: $white;
-        }
-        &:hover span,
-        &:active span,
-        &:focus span {
-            color: $gray-darkest;
-        }
-        span {
-            position: absolute;
-            left: 50%;
-            top: 50%;
-            margin-left: -($toolbar-trigger-icon-size / 2);
-            margin-top: -($toolbar-trigger-icon-size / 2 + 1px);
-            font-size: $toolbar-trigger-icon-size;
-            color: $gray-darker;
-            transition: transform $speed-base;
-            transform: rotate(270deg);
-            background: none;
-        }
-    }
-}
-// #TOOLBAR/elements/loader#
-.cms-toolbar-trigger-expanded a span {
-    transform: rotate(90deg);
-}
-.cms-toolbar-loader {
-    a {
-        span {
-            @extend .cms-icon-loader;
-            position: absolute;
-            margin-top: -($toolbar-trigger-loader-size / 2);
-            margin-left: -($toolbar-trigger-loader-size / 2);
-            font-size: $toolbar-trigger-loader-size;
-            line-height: $toolbar-trigger-loader-size;
-            background: transparent;
-            animation: cms-spin 2s infinite linear;
-        }
-        &,
-        &:hover,
-        &:focus {
-            span {
-                color: $color-primary;
-            }
-        }
     }
 }
 
@@ -587,14 +607,13 @@
 .cms-screenblock {
     position: fixed;
     top: 0;
-    right: 0;
+    inset-inline-end: 0;
     z-index: z(screenblock);
     color: $screenblock-color;
     text-align: center;
     width: 100%;
     height: 100%;
     background-color: $screenblock-bgcolor;
-    background: rgba($screenblock-bgcolor, 0.9);
 }
 
 .cms-screenblock-inner {
@@ -614,4 +633,35 @@
     a:hover {
         text-decoration: underline;
     }
+}
+
+@at-root .cms-scrollbar-measure {
+    position: absolute;
+    top: -9999px;
+    width: 50px;
+    height: 50px;
+    overflow: scroll;
+}
+
+.cms-loading-bar {
+    background: $color-primary;
+
+    position: fixed;
+    z-index: 99999999;
+    top: 0;
+    inset-inline-start: 0;
+
+    width: 100%;
+    height: 3px;
+}
+
+.cms-loading-peg {
+    display: block;
+    position: absolute;
+    inset-inline-end: 0px;
+    width: 100px;
+    height: 100%;
+    box-shadow: 0 0 10px #29d, 0 0 5px $color-primary;
+    opacity: 1.0;
+    transform: rotate(3deg) translate(0px, -4px);
 }

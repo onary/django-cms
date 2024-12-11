@@ -2,17 +2,18 @@
  * Copyright https://github.com/divio/django-cms
  */
 
-var $ = require('jquery');
-var Class = require('classjs');
-var Helpers = require('./cms.base').API.Helpers;
-var KEYS = require('./cms.base').KEYS;
-var ChangeTracker = require('./cms.changetracker');
-var keyboard = require('./keyboard');
+import ChangeTracker from './cms.changetracker';
+import keyboard from './keyboard';
+
+import $ from 'jquery';
+import './jquery.transition';
+import './jquery.trap';
+
+import { Helpers, KEYS } from './cms.base';
+import { showLoader, hideLoader } from './loader';
+
 var previousKeyboardContext;
 var previouslyFocusedElement;
-
-require('./jquery.transition');
-require('./jquery.trap');
 
 /**
  * The modal is triggered via API calls from the backend either
@@ -21,30 +22,13 @@ require('./jquery.trap');
  *
  * @class Modal
  * @namespace CMS
- * @uses CMS.API.Helpers
  */
-var Modal = new Class({
-
-    implement: [Helpers],
-
-    options: {
-        onClose: false,
-        closeOnEsc: true,
-        minHeight: 400,
-        minWidth: 800,
-        modalDuration: 200,
-        resizable: true,
-        maximizable: true,
-        minimizable: true
-    },
-
-    initialize: function initialize(options) {
-        this.options = $.extend(true, {}, this.options, options);
+class Modal {
+    constructor(options) {
+        this.options = $.extend(true, {}, Modal.options, options);
 
         // elements
         this._setupUI();
-        // event emitter
-        this._setupEventEmitter();
 
         // states and events
         this.click = 'click.cms.modal';
@@ -60,35 +44,7 @@ var Modal = new Class({
         this.saved = false;
 
         this._beforeUnloadHandler = this._beforeUnloadHandler.bind(this);
-    },
-
-    /**
-     * Setup event pubsub mechanism for the instance.
-     *
-     * @private
-     * @method _setupEventEmitter
-     */
-    _setupEventEmitter: function _setupEventEmitter() {
-        var that = this;
-        var bus = $({});
-
-        /**
-         * @function proxy
-         * @param {String} name of the method
-         * @returns {Function}
-         */
-        function proxy(name) {
-            return function () {
-                bus[name].apply(bus, arguments);
-                return that;
-            };
-        }
-
-        this.trigger = proxy('trigger');
-        this.one = proxy('one');
-        this.on = proxy('on');
-        this.off = proxy('off');
-    },
+    }
 
     /**
      * Stores all jQuery references within `this.ui`.
@@ -96,7 +52,7 @@ var Modal = new Class({
      * @method _setupUI
      * @private
      */
-    _setupUI: function _setupUI() {
+    _setupUI() {
         var modal = $('.cms-modal');
 
         this.ui = {
@@ -117,7 +73,7 @@ var Modal = new Class({
             frame: modal.find('.cms-modal-frame'),
             shim: modal.find('.cms-modal-shim')
         };
-    },
+    }
 
     /**
      * Sets up all the event handlers, such as maximize/minimize and resizing.
@@ -125,56 +81,55 @@ var Modal = new Class({
      * @method _events
      * @private
      */
-    _events: function _events() {
+    _events() {
         var that = this;
 
         // modal behaviours
         this.ui.minimizeButton
             .off(this.click + ' ' + this.touchEnd + ' ' + this.keyUp)
-            .on(this.click + ' ' + this.touchEnd + ' ' + this.keyUp, function (e) {
-                if (e.type !== 'keyup' || e.type === 'keyup' && e.keyCode === KEYS.ENTER) {
+            .on(this.click + ' ' + this.touchEnd + ' ' + this.keyUp, function(e) {
+                if (e.type !== 'keyup' || (e.type === 'keyup' && e.keyCode === KEYS.ENTER)) {
                     e.preventDefault();
                     that.minimize();
                 }
             });
         this.ui.maximizeButton
             .off(this.click + ' ' + this.touchEnd + ' ' + this.keyUp)
-            .on(this.click + ' ' + this.touchEnd + ' ' + this.keyUp, function (e) {
-                if (e.type !== 'keyup' || e.type === 'keyup' && e.keyCode === KEYS.ENTER) {
+            .on(this.click + ' ' + this.touchEnd + ' ' + this.keyUp, function(e) {
+                if (e.type !== 'keyup' || (e.type === 'keyup' && e.keyCode === KEYS.ENTER)) {
                     e.preventDefault();
                     that.maximize();
                 }
             });
 
-        this.ui.title.off(this.pointerDown).on(this.pointerDown, function (e) {
+        this.ui.title.off(this.pointerDown).on(this.pointerDown, function(e) {
             e.preventDefault();
             that._startMove(e);
         });
-        this.ui.title.off(this.doubleClick).on(this.doubleClick, function () {
+        this.ui.title.off(this.doubleClick).on(this.doubleClick, function() {
             that.maximize();
         });
 
-        this.ui.resize.off(this.pointerDown).on(this.pointerDown, function (e) {
+        this.ui.resize.off(this.pointerDown).on(this.pointerDown, function(e) {
             e.preventDefault();
             that._startResize(e);
         });
 
         this.ui.closeAndCancel
             .off(this.click + ' ' + this.touchEnd + ' ' + this.keyUp)
-            .on(this.click + ' ' + this.touchEnd + ' ' + this.keyUp, function (e) {
-                if (e.type !== 'keyup' || e.type === 'keyup' && e.keyCode === KEYS.ENTER) {
+            .on(this.click + ' ' + this.touchEnd + ' ' + this.keyUp, function(e) {
+                if (e.type !== 'keyup' || (e.type === 'keyup' && e.keyCode === KEYS.ENTER)) {
                     e.preventDefault();
                     that._cancelHandler();
                 }
             });
 
-
         // elements within the window
-        this.ui.breadcrumb.off(this.click, 'a').on(this.click, 'a', function (e) {
+        this.ui.breadcrumb.off(this.click, 'a').on(this.click, 'a', function(e) {
             e.preventDefault();
             that._changeIframe($(this));
         });
-    },
+    }
 
     /**
      * Opens the modal either in an iframe or renders markup.
@@ -191,9 +146,9 @@ var Modal = new Class({
      * @param {Number} [opts.height] sets the height of the modal
      * @returns {Class} this
      */
-    open: function open(opts) {
+    open(opts) {
         // setup internals
-        if (!(opts && opts.url || opts && opts.html)) {
+        if (!((opts && opts.url) || (opts && opts.html))) {
             throw new Error('The arguments passed to "open" were invalid.');
         }
 
@@ -203,11 +158,11 @@ var Modal = new Class({
         // that instance reference every time.
         this._events();
 
-        this.trigger('cms.modal.load');
-        // trigger the event also on the dom element,
-        // because if we load another modal while one is already open
-        // the older instance won't receive any updates
-        this.ui.modal.trigger('cms.modal.load');
+        Helpers.dispatchEvent('modal-load', { instance: this });
+        // // trigger the event also on the dom element,
+        // // because if we load another modal while one is already open
+        // // the older instance won't receive any updates
+        // this.ui.modal.trigger('cms.modal.load');
 
         // common elements state
         this.ui.resize.toggle(this.options.resizable);
@@ -251,7 +206,7 @@ var Modal = new Class({
             });
         }
 
-        this.trigger('cms.modal.loaded');
+        Helpers.dispatchEvent('modal-loaded', { instance: this });
 
         var currentContext = keyboard.getContext();
 
@@ -261,15 +216,20 @@ var Modal = new Class({
         }
 
         // display modal
-        this._show($.extend({
-            duration: this.options.modalDuration
-        }, position));
+        this._show(
+            $.extend(
+                {
+                    duration: this.options.modalDuration
+                },
+                position
+            )
+        );
 
         keyboard.setContext('modal');
         this.ui.modal.trap();
 
         return this;
-    },
+    }
 
     /**
      * Calculates coordinates and dimensions for modal placement
@@ -282,7 +242,7 @@ var Modal = new Class({
      * @returns {Object}
      */
     // eslint-disable-next-line complexity
-    _calculateNewPosition: function (opts) {
+    _calculateNewPosition(opts) {
         // lets set the modal width and height to the size of the browser
         var widthOffset = 300; // adds margin left and right
         var heightOffset = 300; // adds margin top and bottom;
@@ -291,8 +251,8 @@ var Modal = new Class({
         var modalWidth = opts.width || this.options.minWidth;
         var modalHeight = opts.height || this.options.minHeight;
         // screen width and height calculation, WC = width
-        var screenWidthCalc = screenWidth >= (modalWidth + widthOffset);
-        var screenHeightCalc = screenHeight >= (modalHeight + heightOffset);
+        var screenWidthCalc = screenWidth >= modalWidth + widthOffset;
+        var screenHeightCalc = screenHeight >= modalHeight + heightOffset;
 
         var width = screenWidthCalc && !opts.width ? screenWidth - widthOffset : modalWidth;
         var height = screenHeightCalc && !opts.height ? screenHeight - heightOffset : modalHeight;
@@ -314,8 +274,12 @@ var Modal = new Class({
         currentLeft = parseInt(currentLeft, 10);
 
         // if new width/height go out of the screen - reset position to center of screen
-        if ((width / 2 + currentLeft > screenWidth) || (height / 2 + currentTop > screenHeight) ||
-            (currentLeft - width / 2 < 0) || (currentTop - height / 2 < 0)) {
+        if (
+            width / 2 + currentLeft > screenWidth ||
+            height / 2 + currentTop > screenHeight ||
+            currentLeft - width / 2 < 0 ||
+            currentTop - height / 2 < 0
+        ) {
             newLeft = screenWidth / 2;
             newTop = screenHeight / 2;
         }
@@ -331,7 +295,7 @@ var Modal = new Class({
             top: newTop,
             left: newLeft
         };
-    },
+    }
 
     /**
      * Animation helper for opening the sideframe.
@@ -345,55 +309,54 @@ var Modal = new Class({
      * @param {Number} opts.top top in px of the center of the modal
      * @param {Number} opts.duration speed of opening, ms (not really used yet)
      */
-    _show: function _show(opts) {
+    _show(opts) {
         // we need to position the modal in the center
         var that = this;
         var width = opts.width;
         var height = opts.height;
-        // TODO make use of transitionDuration, currently capped at 0.2s
         var speed = opts.duration;
         var top = opts.top;
         var left = opts.left;
-
 
         if (this.ui.modal.hasClass('cms-modal-open')) {
             this.ui.modal.addClass('cms-modal-morphing');
         }
 
         this.ui.modal.css({
-            'display': 'block',
-            'width': width,
-            'height': height,
-            'top': top,
-            'left': left,
-            // TODO animate translateX if possible instead of margin
+            display: 'block',
+            width: width,
+            height: height,
+            top: top,
+            left: left,
             'margin-left': -(width / 2),
             'margin-top': -(height / 2)
         });
         // setImmediate is required to go into the next frame
-        setTimeout(function () {
+        setTimeout(function() {
             that.ui.modal.addClass('cms-modal-open');
         }, 0);
 
-        this.ui.modal.one('cmsTransitionEnd', function () {
-            that.ui.modal.removeClass('cms-modal-morphing');
-            that.ui.modal.css({
-                'margin-left': -(width / 2),
-                'margin-top': -(height / 2)
-            });
+        this.ui.modal
+            .one('cmsTransitionEnd', function() {
+                that.ui.modal.removeClass('cms-modal-morphing');
+                that.ui.modal.css({
+                    'margin-left': -(width / 2),
+                    'margin-top': -(height / 2)
+                });
 
-            // check if we should maximize
-            if (that.triggerMaximized) {
-                that.maximize();
-            }
+                // check if we should maximize
+                if (that.triggerMaximized) {
+                    that.maximize();
+                }
 
-            // changed locked status to allow other modals again
-            CMS.API.locked = false;
-            that.trigger('cms.modal.shown');
-        }).emulateTransitionEnd(speed);
+                // changed locked status to allow other modals again
+                CMS.API.locked = false;
+                Helpers.dispatchEvent('modal-shown', { instance: that });
+            })
+            .emulateTransitionEnd(speed);
 
         // add esc close event
-        this.ui.body.off('keydown.cms.close').on('keydown.cms.close', function (e) {
+        this.ui.body.off('keydown.cms.close').on('keydown.cms.close', function(e) {
             if (e.keyCode === KEYS.ESC && that.options.closeOnEsc) {
                 e.stopPropagation();
                 if (that._confirmDirtyEscCancel()) {
@@ -404,7 +367,7 @@ var Modal = new Class({
 
         // set focus to modal
         this.ui.modal.focus();
-    },
+    }
 
     /**
      * Closes the current instance.
@@ -412,7 +375,7 @@ var Modal = new Class({
      * @method close
      * @returns {Boolean|void}
      */
-    close: function close() {
+    close() {
         var event = Helpers.dispatchEvent('modal-close', { instance: this });
 
         if (event.isDefaultPrevented()) {
@@ -423,7 +386,7 @@ var Modal = new Class({
 
         // handle refresh option
         if (this.options.onClose) {
-            Helpers.reloadBrowser(this.options.onClose, false, true);
+            Helpers.reloadBrowser(this.options.onClose, false);
         }
 
         this._hide({
@@ -435,7 +398,7 @@ var Modal = new Class({
         try {
             previouslyFocusedElement.focus();
         } catch (e) {}
-    },
+    }
 
     /**
      * Animation helper for closing the iframe.
@@ -445,7 +408,7 @@ var Modal = new Class({
      * @param {Object} opts
      * @param {Number} [opts.duration=this.options.modalDuration] animation duration
      */
-    _hide: function _hide(opts) {
+    _hide(opts) {
         var that = this;
         var duration = this.options.modalDuration;
 
@@ -456,25 +419,26 @@ var Modal = new Class({
         this.ui.frame.empty();
         this.ui.modalBody.removeClass('cms-loader');
         this.ui.modal.removeClass('cms-modal-open');
-        this.ui.modal.one('cmsTransitionEnd', function () {
-            that.ui.modal.css('display', 'none');
-        }).emulateTransitionEnd(duration);
+        this.ui.modal
+            .one('cmsTransitionEnd', function() {
+                that.ui.modal.css('display', 'none');
+            })
+            .emulateTransitionEnd(duration);
 
         // reset maximize or minimize states for #3111
-        setTimeout(function () {
+        setTimeout(function() {
             if (that.minimized) {
                 that.minimize();
             }
             if (that.maximized) {
                 that.maximize();
             }
-            that.trigger('cms.modal.closed');
-            CMS.API.Toolbar.hideLoader();
+            hideLoader();
             Helpers.dispatchEvent('modal-closed', { instance: that });
         }, this.options.duration);
 
         this.ui.body.off('keydown.cms.close');
-    },
+    }
 
     /**
      * Minimizes the modal onto the toolbar.
@@ -482,7 +446,7 @@ var Modal = new Class({
      * @method minimize
      * @returns {Boolean|void}
      */
-    minimize: function minimize() {
+    minimize() {
         var MINIMIZED_OFFSET = 50;
 
         // cancel action if maximized
@@ -491,13 +455,8 @@ var Modal = new Class({
         }
 
         if (this.minimized === false) {
-            // ensure toolbar is shown
-            CMS.API.Toolbar.open();
-
             // save initial state
-            this.ui.modal.data('css', this.ui.modal.css([
-                'left', 'top', 'margin-left', 'margin-top'
-            ]));
+            this.ui.modal.data('css', this.ui.modal.css(['left', 'top', 'margin-left', 'margin-top']));
 
             // minimize
             this.ui.body.addClass('cms-modal-minimized');
@@ -513,7 +472,7 @@ var Modal = new Class({
 
             this.minimized = false;
         }
-    },
+    }
 
     /**
      * Maximizes the window according to the browser size.
@@ -521,7 +480,7 @@ var Modal = new Class({
      * @method maximize
      * @returns {Boolean|void}
      */
-    maximize: function maximize() {
+    maximize() {
         // cancel action when minimized
         if (this.minimized) {
             return false;
@@ -529,24 +488,24 @@ var Modal = new Class({
 
         if (this.maximized === false) {
             // save initial state
-            this.ui.modal.data('css', this.ui.modal.css([
-                'left', 'top', 'margin-left', 'margin-top',
-                'width', 'height'
-            ]));
+            this.ui.modal.data(
+                'css',
+                this.ui.modal.css(['left', 'top', 'margin-left', 'margin-top', 'width', 'height'])
+            );
 
             this.ui.body.addClass('cms-modal-maximized');
 
             this.maximized = true;
-            this.dispatchEvent('modal-maximized', { instance: this });
+            Helpers.dispatchEvent('modal-maximized', { instance: this });
         } else {
             // minimize
             this.ui.body.removeClass('cms-modal-maximized');
             this.ui.modal.css(this.ui.modal.data('css'));
 
             this.maximized = false;
-            this.dispatchEvent('modal-restored', { instance: this });
+            Helpers.dispatchEvent('modal-restored', { instance: this });
         }
-    },
+    }
 
     /**
      * Initiates the start move event from `_events`.
@@ -556,7 +515,7 @@ var Modal = new Class({
      * @param {Object} pointerEvent passes starting event
      * @returns {Boolean|void}
      */
-    _startMove: function _startMove(pointerEvent) {
+    _startMove(pointerEvent) {
         // cancel if maximized or minimized
         if (this.maximized || this.minimized) {
             return false;
@@ -570,20 +529,22 @@ var Modal = new Class({
         this.ui.shim.show();
 
         // create event for stopping
-        this.ui.body.on(this.pointerUp, function (e) {
+        this.ui.body.on(this.pointerUp, function(e) {
             that._stopMove(e);
         });
 
-        this.ui.body.on(this.pointerMove, function (e) {
-            left = position.left - (pointerEvent.originalEvent.pageX - e.originalEvent.pageX);
-            top = position.top - (pointerEvent.originalEvent.pageY - e.originalEvent.pageY);
+        this.ui.body
+            .on(this.pointerMove, function(e) {
+                left = position.left - (pointerEvent.originalEvent.pageX - e.originalEvent.pageX);
+                top = position.top - (pointerEvent.originalEvent.pageY - e.originalEvent.pageY);
 
-            that.ui.modal.css({
-                left: left,
-                top: top
-            });
-        }).attr('data-touch-action', 'none');
-    },
+                that.ui.modal.css({
+                    left: left,
+                    top: top
+                });
+            })
+            .attr('data-touch-action', 'none');
+    }
 
     /**
      * Initiates the stop move event from `_startMove`.
@@ -591,12 +552,10 @@ var Modal = new Class({
      * @method _stopMove
      * @private
      */
-    _stopMove: function _stopMove() {
+    _stopMove() {
         this.ui.shim.hide();
-        this.ui.body
-            .off(this.pointerMove + ' ' + this.pointerUp)
-            .removeAttr('data-touch-action');
-    },
+        this.ui.body.off(this.pointerMove + ' ' + this.pointerUp).removeAttr('data-touch-action');
+    }
 
     /**
      * Initiates the start resize event from `_events`.
@@ -606,7 +565,7 @@ var Modal = new Class({
      * @param {Object} pointerEvent passes starting event
      * @returns {Boolean|void}
      */
-    _startResize: function _startResize(pointerEvent) {
+    _startResize(pointerEvent) {
         // cancel if in fullscreen
         if (this.maximized) {
             return false;
@@ -617,43 +576,46 @@ var Modal = new Class({
         var height = this.ui.modal.height();
         var modalLeft = this.ui.modal.position().left;
         var modalTop = this.ui.modal.position().top;
+        var resizeDir = this.ui.resize.css('direction') === 'rtl' ? -1 : +1;
 
         // create event for stopping
-        this.ui.body.on(this.pointerUp, function (e) {
+        this.ui.body.on(this.pointerUp, function(e) {
             that._stopResize(e);
         });
 
         this.ui.shim.show();
 
-        this.ui.body.on(this.pointerMove, function (e) {
-            var mvX = pointerEvent.originalEvent.pageX - e.originalEvent.pageX;
-            var mvY = pointerEvent.originalEvent.pageY - e.originalEvent.pageY;
-            var w = width - (mvX * 2);
-            var h = height - (mvY * 2);
-            var wMin = that.options.minWidth;
-            var hMin = that.options.minHeight;
-            var left = mvX + modalLeft;
-            var top = mvY + modalTop;
+        this.ui.body
+            .on(this.pointerMove, function(e) {
+                var mvX = pointerEvent.originalEvent.pageX - e.originalEvent.pageX;
+                var mvY = pointerEvent.originalEvent.pageY - e.originalEvent.pageY;
+                var w = width - resizeDir * mvX * 2;
+                var h = height - mvY * 2;
+                var wMin = that.options.minWidth;
+                var hMin = that.options.minHeight;
+                var left = resizeDir * mvX + modalLeft;
+                var top = mvY + modalTop;
 
-            // add some limits
-            if (w <= wMin) {
-                w = wMin;
-                left = modalLeft + width / 2 - w / 2;
-            }
-            if (h <= hMin) {
-                h = hMin;
-                top = modalTop + height / 2 - h / 2;
-            }
+                // add some limits
+                if (w <= wMin) {
+                    w = wMin;
+                    left = modalLeft + width / 2 - w / 2;
+                }
+                if (h <= hMin) {
+                    h = hMin;
+                    top = modalTop + height / 2 - h / 2;
+                }
 
-            // set centered animation
-            that.ui.modal.css({
-                width: w,
-                height: h,
-                left: left,
-                top: top
-            });
-        }).attr('data-touch-action', 'none');
-    },
+                // set centered animation
+                that.ui.modal.css({
+                    width: w,
+                    height: h,
+                    left: left,
+                    top: top
+                });
+            })
+            .attr('data-touch-action', 'none');
+    }
 
     /**
      * Initiates the stop resize event from `_startResize`.
@@ -661,12 +623,10 @@ var Modal = new Class({
      * @method _stopResize
      * @private
      */
-    _stopResize: function _stopResize() {
+    _stopResize() {
         this.ui.shim.hide();
-        this.ui.body
-            .off(this.pointerMove + ' ' + this.pointerUp)
-            .removeAttr('data-touch-action');
-    },
+        this.ui.body.off(this.pointerMove + ' ' + this.pointerUp).removeAttr('data-touch-action');
+    }
 
     /**
      * Sets the breadcrumb inside the modal.
@@ -676,7 +636,7 @@ var Modal = new Class({
      * @param {Object[]} breadcrumbs renderes breadcrumb on modal
      * @returns {Boolean|void}
      */
-    _setBreadcrumb: function _setBreadcrumb(breadcrumbs) {
+    _setBreadcrumb(breadcrumbs) {
         var crumb = '';
         var template = '<a href="{1}" class="{2}"><span>{3}</span></a>';
 
@@ -692,20 +652,17 @@ var Modal = new Class({
         this.ui.modal.addClass('cms-modal-has-breadcrumb');
 
         // load breadcrumbs
-        $.each(breadcrumbs, function (index, item) {
+        $.each(breadcrumbs, function(index, item) {
             // check if the item is the last one
             var last = index >= breadcrumbs.length - 1 ? 'active' : '';
 
             // render breadcrumbs
-            crumb += template
-                .replace('{1}', item.url)
-                .replace('{2}', last)
-                .replace('{3}', item.title);
+            crumb += template.replace('{1}', item.url).replace('{2}', last).replace('{3}', item.title);
         });
 
         // attach elements
         this.ui.breadcrumb.html(crumb);
-    },
+    }
 
     /**
      * Sets the buttons inside the modal.
@@ -714,7 +671,7 @@ var Modal = new Class({
      * @private
      * @param {jQuery} iframe loaded iframe element
      */
-    _setButtons: function _setButtons(iframe) {
+    _setButtons(iframe) {
         var djangoSuit = iframe.contents().find('.suit-columns').length > 0;
         var that = this;
         var group = $('<div class="cms-modal-item-buttons"></div>');
@@ -732,7 +689,7 @@ var Modal = new Class({
         var form = iframe.contents().find('form');
 
         // avoids conflict between the browser's form validation and Django's validation
-        form.on('submit', function () {
+        form.on('submit', function() {
             // default submit button was clicked
             // meaning, if you have save - it should close the iframe,
             // if you hit save and continue editing it should be default form behaviour
@@ -748,7 +705,7 @@ var Modal = new Class({
         // we need to listen to this click event to support submitting
         // a form by pressing enter inside of a field
         // click is actually triggered by submit
-        buttons.on('click', function () {
+        buttons.on('click', function() {
             if ($(this).hasClass('default')) {
                 that.hideFrame = true;
             }
@@ -767,7 +724,7 @@ var Modal = new Class({
         }
 
         // loop over input buttons
-        buttons.each(function (index, btn) {
+        buttons.each(function(index, btn) {
             var item = $(btn);
 
             item.attr('data-rel', '_' + index);
@@ -794,7 +751,8 @@ var Modal = new Class({
 
             var el = $('<a href="#" class="' + cls + ' ' + item.attr('class') + '">' + title + '</a>');
 
-            el.on(that.click + ' ' + that.touchEnd, function (e) {
+            // eslint-disable-next-line complexity
+            el.on(that.click + ' ' + that.touchEnd, function(e) {
                 e.preventDefault();
 
                 if (item.is('a')) {
@@ -814,6 +772,20 @@ var Modal = new Class({
                         that.ui.modal.find('.cms-modal-frame iframe').hide();
                         // page has been saved or deleted, run checkup
                         that.saved = true;
+                        if (item.hasClass('deletelink')) {
+                            that.justDeleted = true;
+
+                            var action = item.closest('form').prop('action');
+
+                            // in case action is an input (see https://github.com/jquery/jquery/issues/3691)
+                            // it's definitely not a plugin/placeholder deletion
+                            if (typeof action === 'string' && action.match(/delete-plugin/)) {
+                                that.justDeletedPlugin = /delete-plugin\/(\d+)\//gi.exec(action)[1];
+                            }
+                            if (typeof action === 'string' && action.match(/clear-placeholder/)) {
+                                that.justDeletedPlaceholder = /clear-placeholder\/(\d+)\//gi.exec(action)[1];
+                            }
+                        }
                     }
                 }
 
@@ -842,12 +814,10 @@ var Modal = new Class({
                             // will and calling frm.submit() would throw NS_ERROR_UNEXPECTED
                             try {
                                 frm[0].submit();
-                            } catch (err) {
-                            }
+                            } catch (err) {}
                         }
                     }
                 }
-
             });
             el.wrap(group);
 
@@ -856,7 +826,7 @@ var Modal = new Class({
         });
 
         // manually add cancel button at the end
-        cancel.on(that.click, function (e) {
+        cancel.on(that.click, function(e) {
             e.preventDefault();
             that._cancelHandler();
         });
@@ -871,7 +841,7 @@ var Modal = new Class({
 
         // render buttons
         this.ui.modalButtons.html(render);
-    },
+    }
 
     /**
      * Version where the modal loads an iframe.
@@ -883,15 +853,15 @@ var Modal = new Class({
      * @param {Object[]} [opts.breadcrumbs] collection of breadcrumb items
      * @param {String} [opts.title] modal window main title (bold)
      */
-    _loadIframe: function _loadIframe(opts) {
+    _loadIframe(opts) {
         var that = this;
+        const SHOW_LOADER_TIMEOUT = 500;
 
-        opts.url = this.makeURL(opts.url);
+        opts.url = Helpers.makeURL(opts.url);
         opts.title = opts.title || '';
         opts.breadcrumbs = opts.breadcrumbs || '';
 
-        // show loader
-        CMS.API.Toolbar.showLoader();
+        showLoader();
 
         // set classes
         this.ui.modal.removeClass('cms-modal-markup');
@@ -914,11 +884,12 @@ var Modal = new Class({
 
         // ensure previous iframe is hidden
         holder.find('iframe').css('visibility', 'hidden');
-        that.ui.modalBody.addClass('cms-loader');
+        const loaderTimeout = setTimeout(() => that.ui.modalBody.addClass('cms-loader'), SHOW_LOADER_TIMEOUT);
 
         // attach load event for iframe to prevent flicker effects
         // eslint-disable-next-line complexity
-        iframe.on('load', function () {
+        iframe.on('load', function() {
+            clearTimeout(loaderTimeout);
             var messages;
             var messageList;
             var contents;
@@ -940,9 +911,20 @@ var Modal = new Class({
                 return;
             }
 
-            body.attr('tabindex', '0');
-            iframe.on('focus', function () {
-                body.focus();
+            // check if we are redirected - should only happen after successful form submission
+            var redirect = body.find('a.cms-view-new-object').attr('href');
+
+            if (redirect) {
+                Helpers.reloadBrowser(redirect, false);
+                return true;
+            }
+
+            // tabindex is required for keyboard navigation
+            // body.attr('tabindex', '0');
+            iframe.on('focus', function() {
+                if (this.contentWindow) {
+                    this.contentWindow.focus();
+                }
             });
 
             Modal._setupCtrlEnterSave(document);
@@ -953,13 +935,13 @@ var Modal = new Class({
             // for ckeditor we need to go deeper
             // istanbul ignore next
             if (iframe[0].contentWindow && iframe[0].contentWindow.CMS && iframe[0].contentWindow.CMS.CKEditor) {
-                $(iframe[0].contentWindow.document).ready(function () {
+                $(iframe[0].contentWindow.document).ready(function() {
                     // setTimeout is required to battle CKEditor initialisation
-                    setTimeout(function () {
+                    setTimeout(function() {
                         var editor = iframe[0].contentWindow.CMS.CKEditor.editor;
 
                         if (editor) {
-                            editor.on('loaded', function (e) {
+                            editor.on('instanceReady', function(e) {
                                 Modal._setupCtrlEnterSave(
                                     $(e.editor.container.$).find('iframe')[0].contentWindow.document
                                 );
@@ -974,7 +956,8 @@ var Modal = new Class({
             // in case message didn't appear, assume that admin page is actually a success
             // istanbul ignore if
             if (!saveSuccess) {
-                saveSuccess = Boolean(contents.find('.dashboard #content-main').length) &&
+                saveSuccess =
+                    Boolean(contents.find('.dashboard #content-main').length) &&
                     !contents.find('.messagelist .error').length;
             }
 
@@ -993,12 +976,12 @@ var Modal = new Class({
 
             // hide loaders
             that.ui.modalBody.removeClass('cms-loader');
-            CMS.API.Toolbar.hideLoader();
+            hideLoader();
 
             // determine if we should close the modal or reload
             if (messages.length && that.enforceReload) {
                 that.ui.modalBody.addClass('cms-loader');
-                CMS.API.Toolbar.showLoader();
+                showLoader();
                 Helpers.reloadBrowser();
             }
             if (messages.length && that.enforceClose) {
@@ -1013,9 +996,10 @@ var Modal = new Class({
             that._setButtons($(this));
 
             // when an error occurs, reset the saved status so the form can be checked and validated again
-            if (contents.find('.errornote').length ||
+            if (
+                contents.find('.errornote').length ||
                 contents.find('.errorlist').length ||
-                that.saved && !saveSuccess
+                (that.saved && !saveSuccess)
             ) {
                 that.saved = false;
             }
@@ -1024,12 +1008,31 @@ var Modal = new Class({
             // also check that no delete-confirmation is required
             if (that.saved && saveSuccess && !contents.find('.delete-confirmation').length) {
                 that.ui.modalBody.addClass('cms-loader');
-                CMS.API.Toolbar.showLoader();
-                Helpers.reloadBrowser(
-                    that.options.onClose ? that.options.onClose : window.location.href,
-                    false,
-                    true
-                );
+                if (that.options.onClose) {
+                    showLoader();
+                    Helpers.reloadBrowser(
+                        that.options.onClose ? that.options.onClose : window.location.href,
+                        false,
+                        true
+                    );
+                } else {
+                    setTimeout(function() {
+                        if (that.justDeleted && (that.justDeletedPlugin || that.justDeletedPlaceholder)) {
+                            CMS.API.StructureBoard.invalidateState(
+                                that.justDeletedPlaceholder ? 'CLEAR_PLACEHOLDER' : 'DELETE',
+                                {
+                                    plugin_id: that.justDeletedPlugin,
+                                    placeholder_id: that.justDeletedPlaceholder,
+                                    deleted: true
+                                }
+                            );
+                        }
+                        // hello ckeditor
+                        Helpers.removeEventListener('modal-close.text-plugin');
+                        that.close();
+                    // must be more than 100ms
+                    }, 150); // eslint-disable-line
+                }
             } else {
                 iframe.show();
                 // set title of not provided
@@ -1056,7 +1059,7 @@ var Modal = new Class({
                 iframe.data('ready', true);
 
                 // attach close event
-                body.on('keydown.cms', function (e) {
+                body.on('keydown.cms', function(e) {
                     if (e.keyCode === KEYS.ESC && that.options.closeOnEsc) {
                         e.stopPropagation();
                         if (that._confirmDirtyEscCancel()) {
@@ -1069,6 +1072,21 @@ var Modal = new Class({
                 if (contents.find('.object-tools').length) {
                     contents.find('#content').css('padding-top', 38); // eslint-disable-line
                 }
+
+                // this is required for IE11. we assume that when the modal is opened the user is going to interact
+                // with it. if we don't focus the body directly the next time the user clicks on a field inside
+                // the iframe the focus will be stolen by body thus requiring two clicks. this immediately focuses the
+                // iframe body on load except if something is already focused there
+                // (django tries to focus first field by default)
+                setTimeout(() => {
+                    if (!iframe[0] || !iframe[0].contentDocument || !iframe[0].contentDocument.documentElement) {
+                        return;
+                    }
+                    if ($(iframe[0].contentDocument.documentElement).find(':focus').length) {
+                        return;
+                    }
+                    iframe.trigger('focus');
+                }, 0); // eslint-disable-line
             }
 
             that._attachContentPreservingHandlers(iframe);
@@ -1076,7 +1094,7 @@ var Modal = new Class({
 
         // inject
         holder.html(iframe);
-    },
+    }
 
     /**
      * Adds handlers to prevent accidental refresh / modal close
@@ -1086,13 +1104,13 @@ var Modal = new Class({
      * @private
      * @param {jQuery} iframe
      */
-    _attachContentPreservingHandlers: function _attachContentPreservingHandlers(iframe) {
+    _attachContentPreservingHandlers(iframe) {
         var that = this;
 
         that.tracker = new ChangeTracker(iframe);
 
         Helpers._getWindow().addEventListener('beforeunload', this._beforeUnloadHandler);
-    },
+    }
 
     /**
      * @method _beforeUnloadHandler
@@ -1100,12 +1118,12 @@ var Modal = new Class({
      * @param {Event} e
      * @returns {String|void}
      */
-    _beforeUnloadHandler: function _beforeUnloadHandler(e) {
+    _beforeUnloadHandler(e) {
         if (this.tracker.isFormChanged()) {
             e.returnValue = CMS.config.lang.confirmDirty;
             return e.returnValue;
         }
-    },
+    }
 
     /**
      * Similar functionality as in `_attachContentPreservingHandlers` but for canceling
@@ -1115,14 +1133,12 @@ var Modal = new Class({
      * @private
      * @returns {Boolean}
      */
-    _confirmDirtyEscCancel: function _confirmDirtyEscCancel() {
+    _confirmDirtyEscCancel() {
         if (this.tracker && this.tracker.isFormChanged()) {
-            return Helpers.secureConfirm(
-                CMS.config.lang.confirmDirty + '\n\n' + CMS.config.lang.confirmDirtyESC
-            );
+            return Helpers.secureConfirm(CMS.config.lang.confirmDirty + '\n\n' + CMS.config.lang.confirmDirtyESC);
         }
         return true;
-    },
+    }
 
     /**
      * Version where the modal loads an url within an iframe.
@@ -1132,7 +1148,7 @@ var Modal = new Class({
      * @param {jQuery} el originated element
      * @returns {Boolean|void}
      */
-    _changeIframe: function _changeIframe(el) {
+    _changeIframe(el) {
         if (el.hasClass('active')) {
             return false;
         }
@@ -1145,7 +1161,7 @@ var Modal = new Class({
             url: el.attr('href')
         });
         this.ui.titlePrefix.text(el.text());
-    },
+    }
 
     /**
      * Version where the modal loads html markup.
@@ -1157,7 +1173,7 @@ var Modal = new Class({
      * @param {String} opts.title modal window main title (bold)
      * @param {String} [opts.subtitle] modal window secondary title (normal)
      */
-    _loadMarkup: function _loadMarkup(opts) {
+    _loadMarkup(opts) {
         this.ui.modal.removeClass('cms-modal-iframe');
         this.ui.modal.addClass('cms-modal-markup');
         this.ui.modalBody.removeClass('cms-loader');
@@ -1167,7 +1183,7 @@ var Modal = new Class({
         this.ui.frame.empty().append(opts.html);
         this.ui.titlePrefix.text(opts.title || '');
         this.ui.titleSuffix.text(opts.subtitle || '');
-    },
+    }
 
     /**
      * Called whenever default modal action is canceled.
@@ -1175,53 +1191,62 @@ var Modal = new Class({
      * @method _cancelHandler
      * @private
      */
-    _cancelHandler: function _cancelHandler() {
+    _cancelHandler() {
         this.options.onClose = null;
         this.close();
     }
-});
 
-/**
- * Sets up keyup/keydown listeners so you're able to save whatever you're
- * editing inside of an iframe by pressing `ctrl + enter` on windows and `cmd + enter` on mac.
- *
- * It only works with default button (e.g. action), not the `delete` button,
- * even though sometimes it's the only actionable button in the modal.
- *
- * @method _setupCtrlEnterSave
- * @private
- * @static
- * @param {HTMLElement} doc document element (iframe or parent window);
- */
-Modal._setupCtrlEnterSave = function _setupCtrlEnterSave(doc) {
-    var cmdPressed = false;
-    var mac = navigator.platform.toLowerCase().indexOf('mac') + 1;
+    /**
+     * Sets up keyup/keydown listeners so you're able to save whatever you're
+     * editing inside of an iframe by pressing `ctrl + enter` on windows and `cmd + enter` on mac.
+     *
+     * It only works with default button (e.g. action), not the `delete` button,
+     * even though sometimes it's the only actionable button in the modal.
+     *
+     * @method _setupCtrlEnterSave
+     * @private
+     * @static
+     * @param {HTMLElement} doc document element (iframe or parent window);
+     */
+    static _setupCtrlEnterSave(doc) {
+        var cmdPressed = false;
+        var mac = navigator.platform.toLowerCase().indexOf('mac') + 1;
 
-    $(doc).on('keydown.cms.submit', function (e) {
-        if (e.ctrlKey && e.keyCode === KEYS.ENTER && !mac) {
-            $('.cms-modal-buttons .cms-btn-action:first').trigger('click');
-        }
+        $(doc)
+            .on('keydown.cms.submit', function(e) {
+                if (e.ctrlKey && e.keyCode === KEYS.ENTER && !mac) {
+                    $('.cms-modal-buttons .cms-btn-action:first').trigger('click');
+                }
 
-        if (mac) {
-            if (e.keyCode === KEYS.CMD_LEFT ||
-                e.keyCode === KEYS.CMD_RIGHT ||
-                e.keyCode === KEYS.CMD_FIREFOX) {
-                cmdPressed = true;
-            }
+                if (mac) {
+                    if (e.keyCode === KEYS.CMD_LEFT || e.keyCode === KEYS.CMD_RIGHT || e.keyCode === KEYS.CMD_FIREFOX) {
+                        cmdPressed = true;
+                    }
 
-            if (e.keyCode === KEYS.ENTER && cmdPressed) {
-                $('.cms-modal-buttons .cms-btn-action:first').trigger('click');
-            }
-        }
-    }).on('keyup.cms.submit', function (e) {
-        if (mac) {
-            if (e.keyCode === KEYS.CMD_LEFT ||
-                e.keyCode === KEYS.CMD_RIGHT ||
-                e.keyCode === KEYS.CMD_FIREFOX) {
-                cmdPressed = false;
-            }
-        }
-    });
+                    if (e.keyCode === KEYS.ENTER && cmdPressed) {
+                        $('.cms-modal-buttons .cms-btn-action:first').trigger('click');
+                    }
+                }
+            })
+            .on('keyup.cms.submit', function(e) {
+                if (mac) {
+                    if (e.keyCode === KEYS.CMD_LEFT || e.keyCode === KEYS.CMD_RIGHT || e.keyCode === KEYS.CMD_FIREFOX) {
+                        cmdPressed = false;
+                    }
+                }
+            });
+    }
+}
+
+Modal.options = {
+    onClose: false,
+    closeOnEsc: true,
+    minHeight: 400,
+    minWidth: 800,
+    modalDuration: 200,
+    resizable: true,
+    maximizable: true,
+    minimizable: true
 };
 
-module.exports = Modal;
+export default Modal;

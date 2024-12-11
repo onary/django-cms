@@ -1,65 +1,73 @@
-# -*- coding: utf-8 -*-
 from django.conf import settings
-from django.urls import resolve, Resolver404
-from django.http import Http404
+from django.http import Http404, HttpResponseRedirect
 from django.template.response import TemplateResponse
+from django.urls import Resolver404, resolve, reverse
 
-from cms.workaround import __version__
+from cms import __version__, constants
 from cms.cache.page import set_page_cache
-from cms.models import Page
-from cms.utils import get_template_from_request
-from cms.utils.conf import get_cms_setting
+from cms.models import EmptyPageContent
 from cms.utils.page_permissions import user_can_change_page, user_can_view_page
+from cms.utils.urlutils import admin_reverse
 
 
-def render_page(request, page, current_language, slug):
+def render_page(request, page, current_language, slug=None):
     """
     Renders a page
     """
-    template_name = get_template_from_request(request, page, no_current_page=True)
-    # fill the context
+    page_content = page.page_content_cache.get(current_language, page.get_content_obj(current_language))
     context = {}
     context['lang'] = current_language
     context['current_page'] = page
+    context['current_pagecontent'] = page_content
     context['has_change_permissions'] = user_can_change_page(request.user, page)
     context['has_view_permissions'] = user_can_view_page(request.user, page)
 
-    if not context['has_view_permissions']:
-        return _handle_no_page(request, slug)
+    cant_view_page = any([
+        not context['has_view_permissions'],
+        isinstance(page_content, EmptyPageContent)
+    ])
+    if cant_view_page:
+        return _handle_no_page(request)
 
-    response = TemplateResponse(request, template_name, context)
+    template = page_content.get_template()
+    if not template:
+        # Render placeholder content with minimal markup
+
+        from cms.views import render_placeholder_content
+        return render_placeholder_content(request, page_content, context)
+    response = TemplateResponse(request, template, context)
     response.add_post_render_callback(set_page_cache)
 
     # Add headers for X Frame Options - this really should be changed upon moving to class based views
     xframe_options = page.get_xframe_options()
     # xframe_options can be None if there's no xframe information on the page
     # (eg. a top-level page which has xframe options set to "inherit")
-    if xframe_options == Page.X_FRAME_OPTIONS_INHERIT or xframe_options is None:
+    if xframe_options == constants.X_FRAME_OPTIONS_INHERIT or xframe_options is None:
         # This is when we defer to django's own clickjacking handling
         return response
 
-    # We want to prevent django setting this in their middlewear
+    # We want to prevent django setting this in their middleware
     response.xframe_options_exempt = True
 
-    if xframe_options == Page.X_FRAME_OPTIONS_ALLOW:
+    if xframe_options == constants.X_FRAME_OPTIONS_ALLOW:
         # Do nothing, allowed is no header.
         return response
-    elif xframe_options == Page.X_FRAME_OPTIONS_SAMEORIGIN:
+    elif xframe_options == constants.X_FRAME_OPTIONS_SAMEORIGIN:
         response['X-Frame-Options'] = 'SAMEORIGIN'
-    elif xframe_options == Page.X_FRAME_OPTIONS_DENY:
+    elif xframe_options == constants.X_FRAME_OPTIONS_DENY:
         response['X-Frame-Options'] = 'DENY'
     return response
 
 
-def _handle_no_page(request, slug):
-    context = {}
-    context['cms_version'] = __version__
-    context['cms_edit_on'] = get_cms_setting('CMS_TOOLBAR_URL__EDIT_ON')
-
-    if not slug and settings.DEBUG:
-        return TemplateResponse(request, "cms/welcome.html", context)
+def _handle_no_page(request):
     try:
-        #add a $ to the end of the url (does not match on the cms anymore)
+        # redirect to PageContent's changelist if the root page is detected
+        resolved_path = resolve(request.path)
+        if resolved_path.url_name == 'pages-root':
+            redirect_url = admin_reverse('cms_pagecontent_changelist')
+            return HttpResponseRedirect(redirect_url)
+
+        # add a $ to the end of the url (does not match on the cms anymore)
         resolve('%s$' % request.path)
     except Resolver404 as e:
         # raise a django http 404 page
@@ -67,3 +75,25 @@ def _handle_no_page(request, slug):
         raise exc
     raise Http404('CMS Page not found: %s' % request.path)
 
+
+def _handle_no_apphook(request):
+    context = {
+        "absolute_url": request.toolbar.request_path,
+    }
+    return TemplateResponse(request, "cms/noapphook.html", context)
+
+
+def _render_welcome_page(request):
+    context = {
+        'cms_version': __version__,
+        'django_debug': settings.DEBUG,
+        'next_url': reverse('pages-root'),
+    }
+    return TemplateResponse(request, "cms/welcome.html", context)
+
+
+def render_pagecontent(request, pagecontent):
+    language = pagecontent.language
+    request.current_page = page = pagecontent.page
+    page.page_content_cache[language] = pagecontent
+    return render_page(request, page, language)

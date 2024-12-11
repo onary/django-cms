@@ -1,4 +1,4 @@
-var getDistPath = function (scriptFileName) {
+var getDistPath = function(scriptFileName) {
     var fileNameReplaceRegExp = new RegExp(scriptFileName + '.*$', 'gi');
 
     if (document.currentScript) {
@@ -6,7 +6,7 @@ var getDistPath = function (scriptFileName) {
     }
     var scripts;
     var scriptUrl;
-    var getSrc = function (listOfScripts, attr) {
+    var getSrc = function(listOfScripts, attr) {
         var fileName;
         var scriptPath;
 
@@ -20,7 +20,7 @@ var getDistPath = function (scriptFileName) {
             }
             fileName = scriptPath;
             fileName = fileName.split('?')[0].split('/').pop(); // get script filename
-            if (fileName === scriptFileName) {
+            if (fileName.match(fileNameReplaceRegExp)) {
                 return scriptPath;
             }
         }

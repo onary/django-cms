@@ -2,10 +2,16 @@
  * Copyright https://github.com/divio/django-cms
  */
 
-var $ = require('jquery');
-var Class = require('classjs');
-var Helpers = require('./cms.base').API.Helpers;
-var Modal = require('./cms.modal');
+import Modal from './cms.modal';
+import $ from 'jquery';
+import { Helpers } from './cms.base';
+import Plugin from './cms.plugins';
+import ls from 'local-storage';
+var storageKey = 'cms-clipboard';
+
+var MIN_WIDTH = 400;
+// magic number for 1 item in clipboard
+var MIN_HEIGHT = 117;
 
 /**
  * Handles copy & paste in the structureboard.
@@ -14,19 +20,14 @@ var Modal = require('./cms.modal');
  * @namespace CMS
  * @uses CMS.API.Helpers
  */
-var Clipboard = new Class({
-
-    implement: [Helpers],
-
-    initialize: function () {
+class Clipboard {
+    constructor() {
         this._setupUI();
-
-        // states
-        this.click = 'click.cms.clipboard';
 
         // setup events
         this._events();
-    },
+        this.currentClipboardData = {};
+    }
 
     /**
      * Caches all the jQuery element queries.
@@ -34,7 +35,7 @@ var Clipboard = new Class({
      * @method _setupUI
      * @private
      */
-    _setupUI: function _setupUI() {
+    _setupUI() {
         var clipboard = $('.cms-clipboard');
 
         this.ui = {
@@ -44,7 +45,7 @@ var Clipboard = new Class({
             pluginsList: clipboard.find('.cms-clipboard-containers'),
             document: $(document)
         };
-    },
+    }
 
     /**
      * Sets up event handlers for clipboard ui.
@@ -52,12 +53,8 @@ var Clipboard = new Class({
      * @method _events
      * @private
      */
-    _events: function () {
+    _events() {
         var that = this;
-
-        var MIN_WIDTH = 400;
-        // FIXME kind of a magic number for 1 item in clipboard
-        var MIN_HEIGHT = 117;
 
         that.modal = new Modal({
             minWidth: MIN_WIDTH,
@@ -68,16 +65,43 @@ var Clipboard = new Class({
             closeOnEsc: false
         });
 
-        that.modal.on('cms.modal.loaded cms.modal.closed', function removePlaceholder() {
-            // cannot be cached
-            $('.cms-add-plugin-placeholder').remove();
-        }).on('cms.modal.closed cms.modal.load', function () {
-            that.ui.pluginsList.prependTo(that.ui.clipboard);
-        }).ui.modal.on('cms.modal.load', function () {
-            that.ui.pluginsList.prependTo(that.ui.clipboard);
+        Helpers.removeEventListener(
+            'modal-loaded.clipboard modal-closed.clipboard modal-close.clipboard modal-load.clipboard'
+        );
+
+        Helpers.addEventListener('modal-loaded.clipboard modal-closed.clipboard', (e, { instance }) => {
+            if (instance === this.modal) {
+                Plugin._removeAddPluginPlaceholder();
+            }
         });
 
-        that.ui.triggers.on(that.click, function (e) {
+        Helpers.addEventListener('modal-close.clipboard', (e, { instance }) => {
+            if (instance === this.modal) {
+                this.ui.pluginsList.prependTo(that.ui.clipboard);
+                Plugin._updateClipboard();
+            }
+        });
+        Helpers.addEventListener('modal-load.clipboard', (e, { instance }) => {
+            if (instance === this.modal) {
+                this.ui.pluginsList.prependTo(that.ui.clipboard);
+            } else {
+                this.ui.pluginsList.prependTo(that.ui.clipboard);
+                Plugin._updateClipboard();
+            }
+        });
+
+        try {
+            ls.off(storageKey);
+        } catch (e) {}
+        ls.on(storageKey, value => this._handleExternalUpdate(value));
+
+        this._toolbarEvents();
+    }
+
+    _toolbarEvents() {
+        var that = this;
+
+        that.ui.triggers.off(Clipboard.click).on(Clipboard.click, function(e) {
             e.preventDefault();
             e.stopPropagation();
             if ($(this).parent().hasClass('cms-toolbar-item-navigation-disabled')) {
@@ -94,33 +118,103 @@ var Clipboard = new Class({
         });
 
         // add remove event
-        that.ui.triggerRemove.on(that.click, function (e) {
+        that.ui.triggerRemove.off(Clipboard.click).on(Clipboard.click, function(e) {
             e.preventDefault();
             e.stopPropagation();
             if ($(this).parent().hasClass('cms-toolbar-item-navigation-disabled')) {
                 return false;
             }
-            that.clear(function () {
-                // remove element on success
-                if (that._isClipboardModalOpen()) {
-                    that.modal.close();
-                }
-
-                that.ui.triggers.parent().addClass('cms-toolbar-item-navigation-disabled');
-                that.ui.triggerRemove.parent().addClass('cms-toolbar-item-navigation-disabled');
-                that.ui.document.trigger('click.cms.toolbar');
-            });
+            that.clear();
         });
-    },
+    }
+
+    /**
+     * _handleExternalUpdate
+     *
+     * @private
+     * @param {String} value event new value
+     */
+    _handleExternalUpdate(value) {
+        var that = this;
+        var clipboardData = JSON.parse(value);
+
+        if (
+            clipboardData.timestamp < that.currentClipboardData.timestamp ||
+            (that.currentClipboardData.data &&
+                that.currentClipboardData.data.plugin_id === clipboardData.data.plugin_id)
+        ) {
+            that.currentClipboardData = clipboardData;
+            return;
+        }
+
+        if (!clipboardData.data.plugin_id) {
+            that._cleanupDOM();
+            that.currentClipboardData = clipboardData;
+            return;
+        }
+
+        if (!that.currentClipboardData.data.plugin_id) {
+            that._enableTriggers();
+        }
+
+        that.ui.pluginsList.html(clipboardData.html);
+        Plugin._updateClipboard();
+        CMS._instances.push(new Plugin(`cms-plugin-${clipboardData.data.plugin_id}`, clipboardData.data));
+
+        that.currentClipboardData = clipboardData;
+    }
 
     /**
      * @method _isClipboardModalOpen
      * @private
      * @returns {Boolean}
      */
-    _isClipboardModalOpen: function _isClipboardModalOpen() {
+    _isClipboardModalOpen() {
         return !!this.modal.ui.modalBody.find('.cms-clipboard-containers').length;
-    },
+    }
+
+    /**
+     * Cleans up DOM state when clipboard is cleared
+     *
+     * @method _cleanupDOM
+     * @private
+     */
+    _cleanupDOM() {
+        var that = this;
+        var pasteItems = $('.cms-submenu-item [data-rel=paste]')
+            .attr('tabindex', '-1')
+            .parent()
+            .addClass('cms-submenu-item-disabled');
+
+        pasteItems.find('> a').attr('aria-disabled', 'true');
+        pasteItems.find('.cms-submenu-item-paste-tooltip').css('display', 'none');
+        pasteItems.find('.cms-submenu-item-paste-tooltip-empty').css('display', 'block');
+
+        if (that._isClipboardModalOpen()) {
+            that.modal.close();
+        }
+
+        that._disableTriggers();
+        that.ui.document.trigger('click.cms.toolbar');
+    }
+
+    /**
+     * @method _enableTriggers
+     * @private
+     */
+    _enableTriggers() {
+        this.ui.triggers.parent().removeClass('cms-toolbar-item-navigation-disabled');
+        this.ui.triggerRemove.parent().removeClass('cms-toolbar-item-navigation-disabled');
+    }
+
+    /**
+     * @method _disableTriggers
+     * @private
+     */
+    _disableTriggers() {
+        this.ui.triggers.parent().addClass('cms-toolbar-item-navigation-disabled');
+        this.ui.triggerRemove.parent().addClass('cms-toolbar-item-navigation-disabled');
+    }
 
     /**
      * Clears the clipboard by quering the server.
@@ -130,23 +224,47 @@ var Clipboard = new Class({
      * @method clear
      * @param {Function} [callback]
      */
-    clear: function (callback) {
+    clear(callback) {
+        var that = this;
         // post needs to be a string, it will be converted using JSON.parse
         var post = '{ "csrfmiddlewaretoken": "' + CMS.config.csrf + '" }';
-        var pasteItems = $('.cms-submenu-item [data-rel=paste]').attr('tabindex', '-1').parent()
-            .addClass('cms-submenu-item-disabled');
 
-        pasteItems.find('.cms-submenu-item-paste-tooltip').css('display', 'none');
-        pasteItems.find('.cms-submenu-item-paste-tooltip-empty').css('display', 'block');
+        that._cleanupDOM();
 
         // redirect to ajax
         CMS.API.Toolbar.openAjax({
             url: Helpers.updateUrlWithPath(CMS.config.clipboard.url),
             post: post,
-            callback: callback
+            callback: function() {
+                var args = Array.prototype.slice.call(arguments);
+
+                that.populate('', {});
+                // istanbul ignore next
+                if (callback) {
+                    callback.apply(this, args);
+                }
+            }
         });
     }
 
-});
+    /**
+     * populate
+     *
+     * @public
+     * @param {String} html markup of the clipboard draggable
+     * @param {Object} pluginData data of the plugin in the clipboard
+     */
+    populate(html, pluginData) {
+        this.currentClipboardData = {
+            data: pluginData,
+            timestamp: Date.now(),
+            html: html
+        };
 
-module.exports = Clipboard;
+        ls.set(storageKey, JSON.stringify(this.currentClipboardData));
+    }
+}
+
+Clipboard.click = 'click.cms.clipboard';
+
+export default Clipboard;

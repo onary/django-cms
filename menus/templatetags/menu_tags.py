@@ -1,17 +1,22 @@
-# -*- coding: utf-8 -*-
-from classytags.arguments import IntegerArgument, Argument, StringArgument
+from urllib.parse import unquote
+
+from classytags.arguments import Argument, IntegerArgument, StringArgument
 from classytags.core import Options
 from classytags.helpers import InclusionTag
-from cms.utils.i18n import force_language, get_language_objects
 from django import template
 from django.contrib.sites.models import Site
-from django.urls import reverse, NoReverseMatch
+from django.urls import NoReverseMatch, reverse
 from django.utils.encoding import force_str
-from six.moves.urllib.parse import unquote
-from django.utils.translation import get_language, ugettext
+from django.utils.translation import get_language, gettext
+
+from cms.utils.i18n import (
+    force_language,
+    get_language_list,
+    get_language_object,
+    get_public_languages,
+)
 from menus.menu_pool import menu_pool
 from menus.utils import DefaultLanguageChanger
-
 
 register = template.Library()
 
@@ -20,23 +25,21 @@ class NOT_PROVIDED:
     pass
 
 
-def cut_after(node, levels, removed):
+def cut_after(node, levels, removed=None):
     """
     given a tree of nodes cuts after N levels
     """
+    if removed is not None:
+        raise TypeError("menus.template_tags.cut_after() does not accept 'removed' list argument")
+
     if levels == 0:
-        removed.extend(node.children)
         node.children = []
     else:
-        removed_local = []
         for child in node.children:
             if child.visible:
-                cut_after(child, levels - 1, removed)
+                cut_after(child, levels - 1)
             else:
-                removed_local.append(child)
-        for removed_child in removed_local:
-            node.children.remove(removed_child)
-        removed.extend(removed_local)
+                node.children.remove(child)
 
 
 def remove(node, removed):
@@ -51,35 +54,45 @@ def cut_levels(nodes, from_level, to_level, extra_inactive, extra_active):
     cutting nodes away from menus
     """
     final = []
-    removed = []
     selected = None
     for node in nodes:
-        if not hasattr(node, 'level'):
-            # remove and ignore nodes that don't have level information
-            remove(node, removed)
-            continue
-        if node.level == from_level:
-            # turn nodes that are on from_level into root nodes
-            final.append(node)
-            node.parent = None
-        if not node.ancestor and not node.selected and not node.descendant:
-            # cut inactive nodes to extra_inactive, but not of descendants of
-            # the selected node
-            cut_after(node, extra_inactive, removed)
-        if node.level > to_level and node.parent:
-            # remove nodes that are too deep, but not nodes that are on
-            # from_level (local root nodes)
-            remove(node, removed)
+        if getattr(node, "level", None) == from_level and node.visible:
+            if node.level <= extra_inactive or node.selected or node.ancestor or node.descendant:
+                # Add to root nodes if active or clearly within inactive levels
+                final.append(node)
+            else:
+                # Find level of nearest active ancestor
+                parent = node.parent
+                while parent:
+                    if parent.ancestor:
+                        if parent.level + extra_inactive + 1 >= from_level:
+                            final.append(node)
+                        break
+                    parent = parent.parent
+        elif not node.visible and node.parent and node in node.parent.children:
+            # Cut out invisible child nodes
+            node.parent.children.remove(node)
+        if getattr(node, "level", None) == to_level:
+            # Cut at to_level
+            node.children = []
         if node.selected:
+            # Mark selected node
             selected = node
-        if not node.visible:
-            remove(node, removed)
-    if selected:
-        cut_after(selected, extra_active, removed)
-    if removed:
-        for node in removed:
-            if node in final:
-                final.remove(node)
+
+    def cut_inactive(final_nodes):
+        """Recursively cut inactive nodes from the tree."""
+        for node in final_nodes:
+            if not node.selected and not node.ancestor:
+                # Cut out inactive nodes after extra_inactive levels (starting a 0)
+                cut_after(node, extra_inactive - from_level)
+            elif not node.selected:
+                # Look for more inactive nodes (children of selected nodes are descendants by definition)
+                cut_inactive(node.children)
+
+    if extra_inactive is not None:
+        cut_inactive(final)
+    if selected and extra_active < 1000:  # 1000 is the default value - no cut
+        cut_after(selected, extra_active)
     return final
 
 
@@ -91,6 +104,7 @@ def flatten(nodes):
     return flat
 
 
+@register.tag(name="show_menu")
 class ShowMenu(InclusionTag):
     """
     render a nested list of all children of the pages
@@ -143,28 +157,24 @@ class ShowMenu(InclusionTag):
                         remove_parent.parent = None
                     from_level += node.level + 1
                     to_level += node.level + 1
+                    extra_inactive += node.level + 1
                     nodes = flatten(nodes)
                 else:
                     nodes = []
             children = cut_levels(nodes, from_level, to_level, extra_inactive, extra_active)
             children = menu_renderer.apply_modifiers(children, namespace, root_id, post_cut=True)
 
-        try:
-            context['children'] = children
-            context['template'] = template
-            context['from_level'] = from_level
-            context['to_level'] = to_level
-            context['extra_inactive'] = extra_inactive
-            context['extra_active'] = extra_active
-            context['namespace'] = namespace
-        except:
-            context = {"template": template}
+        context['children'] = children
+        context['template'] = template
+        context['from_level'] = from_level
+        context['to_level'] = to_level
+        context['extra_inactive'] = extra_inactive
+        context['extra_active'] = extra_active
+        context['namespace'] = namespace
         return context
 
 
-register.tag(ShowMenu)
-
-
+@register.tag(name="show_menu_below_id")
 class ShowMenuBelowId(ShowMenu):
     name = 'show_menu_below_id'
     options = Options(
@@ -179,9 +189,7 @@ class ShowMenuBelowId(ShowMenu):
     )
 
 
-register.tag(ShowMenuBelowId)
-
-
+@register.tag(name="show_sub_menu")
 class ShowSubMenu(InclusionTag):
     """
     show the sub menu of the current nav-node.
@@ -218,7 +226,7 @@ class ShowSubMenu(InclusionTag):
 
         nodes = menu_renderer.get_nodes()
         children = []
-        # adjust root_level so we cut before the specified level, not after
+        # adjust root_level, so we cut before the specified level, not after
         include_root = False
         if root_level is not None and root_level > 0:
             root_level -= 1
@@ -234,11 +242,11 @@ class ShowSubMenu(InclusionTag):
             # is a node selected on the root_level specified
             root_selected = (node.selected and node.level == root_level)
             if is_root_ancestor or root_selected:
-                cut_after(node, levels, [])
+                cut_after(node, levels)
                 children = node.children
                 for child in children:
                     if child.sibling:
-                        cut_after(child, nephews, [])
+                        cut_after(child, nephews)
                         # if root_level was 0 we need to give the menu the entire tree
                     # not just the children
                 if include_root:
@@ -254,9 +262,7 @@ class ShowSubMenu(InclusionTag):
         return context
 
 
-register.tag(ShowSubMenu)
-
-
+@register.tag(name="show_breadcrumb")
 class ShowBreadcrumb(InclusionTag):
     """
     Shows the breadcrumb from the node that has the same url as the current request
@@ -285,7 +291,7 @@ class ShowBreadcrumb(InclusionTag):
             start_level = 0
         try:
             only_visible = bool(int(only_visible))
-        except:
+        except:  # NOQA
             only_visible = bool(only_visible)
         ancestors = []
 
@@ -323,20 +329,17 @@ class ShowBreadcrumb(InclusionTag):
         return context
 
 
-register.tag(ShowBreadcrumb)
-
-
 def _raw_language_marker(language, lang_code):
     return language
 
 
 def _native_language_marker(language, lang_code):
     with force_language(lang_code):
-        return force_str(ugettext(language))
+        return force_str(gettext(language))
 
 
 def _current_language_marker(language, lang_code):
-    return force_str(ugettext(language))
+    return force_str(gettext(language))
 
 
 def _short_language_marker(language, lang_code):
@@ -351,6 +354,7 @@ MARKERS = {
 }
 
 
+@register.tag(name="language_chooser")
 class LanguageChooser(InclusionTag):
     """
     Displays a language chooser
@@ -374,7 +378,7 @@ class LanguageChooser(InclusionTag):
             i18n_mode = _tmp
         if template is NOT_PROVIDED:
             template = "menu/language_chooser.html"
-        if not i18n_mode in MARKERS:
+        if i18n_mode not in MARKERS:
             i18n_mode = 'raw'
         if 'request' not in context:
             # If there's an exception (500), default context_processors may not be called.
@@ -382,19 +386,26 @@ class LanguageChooser(InclusionTag):
         marker = MARKERS[i18n_mode]
         current_lang = get_language()
         site = Site.objects.get_current()
-        languages = []
-        for lang in get_language_objects(site.pk):
-            if lang.get('public', True):
-                languages.append((lang['code'], marker(lang['name'], lang['code'])))
-        context['languages'] = languages
+        request = context['request']
+
+        if request.user.is_staff:
+            languages = get_language_list(site_id=site.pk)
+        else:
+            languages = get_public_languages(site_id=site.pk)
+
+        languages_info = []
+
+        for language in languages:
+            obj = get_language_object(language, site_id=site.pk)
+            languages_info.append((obj['code'], marker(obj['name'], obj['code'])))
+
+        context['languages'] = languages_info
         context['current_language'] = current_lang
         context['template'] = template
         return context
 
 
-register.tag(LanguageChooser)
-
-
+@register.tag(name="page_language_url")
 class PageLanguageUrl(InclusionTag):
     """
     Displays the url of the current page in the defined language.
@@ -423,6 +434,3 @@ class PageLanguageUrl(InclusionTag):
             # use the default language changer
             url = DefaultLanguageChanger(request)(lang)
         return {'content': url}
-
-
-register.tag(PageLanguageUrl)

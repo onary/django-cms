@@ -1,13 +1,12 @@
-# -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 
-from cms.models import ACCESS_CHOICES, Page
+from cms.models import ACCESS_CHOICES, PageContent
 from cms.utils.conf import get_cms_setting
 from cms.constants import TEMPLATE_INHERITANCE_MAGIC
 from django.conf import settings
 from django.db import models, migrations
 import django.utils.timezone
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 template_choices = [(x, _(y)) for x, y in get_cms_setting('TEMPLATES')]
 
@@ -45,7 +44,7 @@ class Migration(migrations.Migration):
             name='AliasPluginModel',
             fields=[
                 ('cmsplugin_ptr', models.OneToOneField(primary_key=True, to='cms.CMSPlugin', auto_created=True, parent_link=True, serialize=False, on_delete=models.CASCADE)),
-                ('plugin', models.ForeignKey(null=True, to='cms.CMSPlugin', related_name='alias_reference', editable=False, on_delete=models.SET_NULL)),
+                ('plugin', models.ForeignKey(on_delete=models.CASCADE, null=True, to='cms.CMSPlugin', related_name='alias_reference', editable=False)),
             ],
             options={
             },
@@ -54,7 +53,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='cmsplugin',
             name='parent',
-            field=models.ForeignKey(null=True, to='cms.CMSPlugin', blank=True, editable=False, on_delete=models.SET_NULL),
+            field=models.ForeignKey(on_delete=models.CASCADE, null=True, to='cms.CMSPlugin', blank=True, editable=False),
             preserve_default=True,
         ),
         migrations.CreateModel(
@@ -70,9 +69,9 @@ class Migration(migrations.Migration):
                 ('can_move_page', models.BooleanField(default=True, verbose_name=_('can move'))),
                 ('can_view', models.BooleanField(default=False, help_text='frontend view restriction', verbose_name=_('view restricted'))),
                 ('can_recover_page', models.BooleanField(default=True, help_text='can recover any deleted page', verbose_name=_('can recover pages'))),
-                ('group', models.ForeignKey(null=True, to='auth.Group', verbose_name=_('group'), blank=True, on_delete=models.SET_NULL)),
+                ('group', models.ForeignKey(on_delete=models.CASCADE, null=True, to='auth.Group', verbose_name=_('group'), blank=True)),
                 ('sites', models.ManyToManyField(null=True, help_text='If none selected, user haves granted permissions to all sites.', blank=True, to='sites.Site', verbose_name=_('sites'))),
-                ('user', models.ForeignKey(null=True, to=settings.AUTH_USER_MODEL, verbose_name=_('user'), blank=True, on_delete=models.SET_NULL)),
+                ('user', models.ForeignKey(on_delete=models.CASCADE, null=True, to=settings.AUTH_USER_MODEL, verbose_name=_('user'), blank=True)),
             ],
             options={
                 'verbose_name': 'Page global permission',
@@ -96,7 +95,7 @@ class Migration(migrations.Migration):
                 ('navigation_extenders', models.CharField(db_index=True, max_length=80, blank=True, verbose_name=_('attached menu'), null=True)),
                 ('template', models.CharField(max_length=100, default=template_default, help_text='The template used to render the content.', verbose_name=_('template'), choices=template_choices)),
                 ('login_required', models.BooleanField(default=False, verbose_name=_('login required'))),
-                ('limit_visibility_in_menu', models.SmallIntegerField(db_index=True, default=None, verbose_name=_('menu visibility'), null=True, choices=Page.LIMIT_VISIBILITY_IN_MENU_CHOICES, help_text='limit when this page is visible in the menu', blank=True)),
+                ('limit_visibility_in_menu', models.SmallIntegerField(db_index=True, default=None, verbose_name=_('menu visibility'), null=True, choices=PageContent.LIMIT_VISIBILITY_IN_MENU_CHOICES, help_text='limit when this page is visible in the menu', blank=True)),
                 ('is_home', models.BooleanField(db_index=True, default=False, editable=False)),
                 ('application_urls', models.CharField(db_index=True, max_length=200, blank=True, verbose_name=_('application'), null=True)),
                 ('application_namespace', models.CharField(max_length=200, null=True, blank=True, verbose_name=_('application instance name'))),
@@ -107,10 +106,10 @@ class Migration(migrations.Migration):
                 ('publisher_is_draft', models.BooleanField(db_index=True, default=True, editable=False)),
                 ('languages', models.CharField(max_length=255, null=True, blank=True, editable=False)),
                 ('revision_id', models.PositiveIntegerField(default=0, editable=False)),
-                ('xframe_options', models.IntegerField(default=get_cms_setting('DEFAULT_X_FRAME_OPTIONS'), choices=Page.X_FRAME_OPTIONS_CHOICES)),
-                ('parent', models.ForeignKey(null=True, to='cms.Page', related_name='children', blank=True, on_delete=models.SET_NULL)),
-                ('publisher_public', models.OneToOneField(null=True, to='cms.Page', related_name='publisher_draft', editable=False, on_delete=models.SET_NULL)),
-                ('site', models.ForeignKey(to='sites.Site', verbose_name=_('site'), related_name='djangocms_pages', help_text='The site the page is accessible at.', on_delete=models.SET_NULL)),
+                ('xframe_options', models.IntegerField(default=get_cms_setting('DEFAULT_X_FRAME_OPTIONS'), choices=PageContent.X_FRAME_OPTIONS_CHOICES)),
+                ('parent', models.ForeignKey(on_delete=models.CASCADE, null=True, to='cms.Page', related_name='children', blank=True)),
+                ('publisher_public', models.OneToOneField(null=True, to='cms.Page', related_name='publisher_draft', editable=False, on_delete=models.CASCADE)),
+                ('site', models.ForeignKey(on_delete=models.CASCADE, to='sites.Site', verbose_name=_('site'), related_name='djangocms_pages', help_text='The site the page is accessible at.')),
             ],
             options={
                 'ordering': ('tree_id', 'lft'),
@@ -133,9 +132,9 @@ class Migration(migrations.Migration):
                 ('can_move_page', models.BooleanField(default=True, verbose_name=_('can move'))),
                 ('can_view', models.BooleanField(default=False, help_text='frontend view restriction', verbose_name=_('view restricted'))),
                 ('grant_on', models.IntegerField(default=5, verbose_name=_('Grant on'), choices=ACCESS_CHOICES)),
-                ('group', models.ForeignKey(null=True, to='auth.Group', verbose_name=_('group'), blank=True, on_delete=models.SET_NULL)),
-                ('page', models.ForeignKey(null=True, to='cms.Page', verbose_name=_('page'), blank=True, on_delete=models.SET_NULL)),
-                ('user', models.ForeignKey(null=True, to=settings.AUTH_USER_MODEL, verbose_name=_('user'), blank=True, on_delete=models.SET_NULL)),
+                ('group', models.ForeignKey(on_delete=models.CASCADE, null=True, to='auth.Group', verbose_name=_('group'), blank=True)),
+                ('page', models.ForeignKey(on_delete=models.CASCADE, null=True, to='cms.Page', verbose_name=_('page'), blank=True)),
+                ('user', models.ForeignKey(on_delete=models.CASCADE, null=True, to=settings.AUTH_USER_MODEL, verbose_name=_('user'), blank=True)),
             ],
             options={
                 'verbose_name': 'Page permission',

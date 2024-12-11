@@ -1,18 +1,16 @@
-# -*- coding: utf-8 -*-
-from django.utils.html import conditional_escape
+from django.core.serializers.json import DjangoJSONEncoder
 from django.utils.encoding import force_str
 from django.utils.functional import Promise
-from django.core.serializers.json import DjangoJSONEncoder
-from six import iteritems
+from django.utils.html import conditional_escape
 
 
 class SafeJSONEncoder(DjangoJSONEncoder):
     def _recursive_escape(self, o, esc=conditional_escape):
         if isinstance(o, dict):
-            return type(o)((esc(k), self._recursive_escape(v)) for (k, v) in iteritems(o))
+            return type(o)((esc(k), self._recursive_escape(v)) for (k, v) in dict.items(o))
         if isinstance(o, (list, tuple)):
             return type(o)(self._recursive_escape(v) for v in o)
-        if type(o) is bool:
+        if isinstance(o, bool):
             return o
         try:
             return type(o)(esc(o))
@@ -21,9 +19,9 @@ class SafeJSONEncoder(DjangoJSONEncoder):
 
     def encode(self, o):
         value = self._recursive_escape(o)
-        return super(SafeJSONEncoder, self).encode(value)
+        return super().encode(value)
 
     def default(self, o):
         if isinstance(o, Promise):
             return force_str(o)
-        return super(SafeJSONEncoder, self).default(o)
+        return super().default(o)

@@ -12,9 +12,13 @@ module.exports = function addSlugHandlers(title, slug) {
     if (slug.val().trim() === '') {
         prefill = true;
     }
+    if (window.unihandecode) {
+        // eslint-disable-next-line new-cap
+        window.UNIHANDECODER = window.unihandecode.Unihan(slug.data('decoder'));
+    }
 
     // always bind the title > slug generation and do the validation inside for better ux
-    title.on('keyup keypress', function () {
+    title.on('keyup keypress', function() {
         var value = title.val();
 
         // international language handling
@@ -35,12 +39,8 @@ module.exports = function addSlugHandlers(title, slug) {
     // autocall
     title.trigger('keyup');
 
-    // set focus to title
-    title.focus();
-
     // add changed data bindings to elements
-    slug.add(title).bind('change', function () {
+    slug.add(title).bind('change', function() {
         $(this).data('changed', true);
     });
-
 };

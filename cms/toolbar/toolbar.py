@@ -1,45 +1,156 @@
-# -*- coding: utf-8 -*-
+import functools
+import operator
 from collections import OrderedDict
 
+from classytags.utils import flatten_context
+from django.apps import apps
+from django.conf import settings
+from django.middleware.csrf import get_token
+from django.template.loader import render_to_string
+from django.urls import Resolver404, resolve
+from django.utils.functional import cached_property
+from django.utils.translation import override as force_language
+
+from cms import __version__
 from cms.constants import LEFT, REFRESH_PAGE
-from cms.models import UserSettings, Placeholder
-from cms.toolbar.items import Menu, ToolbarAPIMixin, ButtonList
+from cms.forms.login import CMSToolbarLoginForm
+from cms.models import Placeholder, UserSettings
+from cms.templates import TemplatesCache
+from cms.toolbar.items import ButtonList, Menu, ToolbarAPIMixin
+from cms.toolbar.utils import (
+    get_object_edit_url,
+    get_object_preview_url,
+    get_object_structure_url,
+)
 from cms.toolbar_pool import toolbar_pool
 from cms.utils import get_language_from_request
+from cms.utils.compat import DJANGO_VERSION, PYTHON_VERSION
 from cms.utils.compat.dj import installed_apps
 from cms.utils.conf import get_cms_setting
-from cms.utils.i18n import force_language
+from cms.utils.i18n import get_site_language_from_request
 
-from django import forms
-from django.conf import settings
-from django.contrib.auth import login, logout, REDIRECT_FIELD_NAME
-from django.contrib.auth.forms import AuthenticationForm
-from django.urls import resolve, Resolver404
-from django.http import HttpResponseRedirect, HttpResponse
-from django.middleware.csrf import get_token
-from django.utils.functional import cached_property
-from django.utils.http import is_safe_url
+cms_toolbar_extensions = apps.get_app_config('cms').cms_extension.toolbar_mixins
 
 
-class CMSToolbarLoginForm(AuthenticationForm):
-
-    def __init__(self, *args, **kwargs):
-        super(CMSToolbarLoginForm, self).__init__(*args, **kwargs)
-        kwargs['prefix'] = kwargs.get('prefix', 'cms')
-        self.fields['username'].widget = forms.TextInput(
-            attrs = { 'required': 'required' })
-        self.fields['password'].widget = forms.PasswordInput(
-            attrs = { 'required': 'required' })
-
-
-class CMSToolbar(ToolbarAPIMixin):
-    """
-    The default CMS Toolbar
-    """
+class BaseToolbar(ToolbarAPIMixin):
+    #: Property; a list of models that the toolbar :ref:`watches for URL changes <url_changes>`,
+    #: so it can redirect to the new URL on saving.
     watch_models = []
 
-    def __init__(self, request):
-        super(CMSToolbar, self).__init__()
+    disable_url = get_cms_setting('CMS_TOOLBAR_URL__DISABLE')
+
+    @cached_property
+    def _resolver_match(self):
+        if getattr(self.request, 'resolver_match', None):
+            return self.request.resolver_match
+
+        try:
+            if hasattr(self, "request_path"):
+                match = resolve(self.request_path)
+            else:
+                match = resolve(self.request.path_info)
+        except Resolver404:
+            match = None
+        return match
+
+    @cached_property
+    def site_language(self):
+        cms_page = self.request.current_page
+        site_id = cms_page.site_id if cms_page else None
+        return get_site_language_from_request(self.request, site_id)
+
+    @cached_property
+    def request_language(self):
+        if settings.USE_I18N:
+            language = get_language_from_request(self.request)
+        else:
+            language = settings.LANGUAGE_CODE
+        return language
+
+    def get_content_renderer(self):
+        if self.uses_legacy_structure_mode:
+            return self.legacy_renderer
+        return self.content_renderer
+
+    @cached_property
+    def legacy_renderer(self):
+        from cms.plugin_rendering import LegacyRenderer
+
+        return LegacyRenderer(request=self.request)
+
+    @cached_property
+    def content_renderer(self):
+        from cms.plugin_rendering import ContentRenderer
+
+        return ContentRenderer(request=self.request)
+
+    @cached_property
+    def structure_renderer(self):
+        from cms.plugin_rendering import StructureRenderer
+
+        return StructureRenderer(request=self.request)
+
+    @cached_property
+    def structure_mode_active(self):
+        if self.is_staff and self._resolver_match:
+            return self._resolver_match.url_name == 'cms_placeholder_render_object_structure'
+        return False
+
+    @cached_property
+    def edit_mode_active(self):
+        """``True`` if the structure board editing mode is active."""
+        if not self.show_toolbar:
+            return False
+
+        if self.structure_mode_active:
+            return True
+        if self.is_staff and self._resolver_match:
+            return self._resolver_match.url_name == 'cms_placeholder_render_object_edit'
+        return False
+
+    @cached_property
+    def preview_mode_active(self):
+        """``True`` if preview mode is active."""
+        if self.is_staff and self._resolver_match:
+            return self._resolver_match.url_name == 'cms_placeholder_render_object_preview'
+        return False
+
+    @cached_property
+    def content_mode_active(self):
+        """``True`` if content mode is active."""
+        return self.is_staff and not self.edit_mode_active
+
+    @cached_property
+    def uses_legacy_structure_mode(self):
+        return False
+
+    @cached_property
+    def templates(self):
+        return TemplatesCache()
+
+    @cached_property
+    def sideframe_enabled(self):
+        return get_cms_setting('SIDEFRAME_ENABLED')
+
+
+class CMSToolbarBase(BaseToolbar):
+    """
+    The toolbar is an instance of the :class:`~cms.toolbar.toolbar.CMSToolbar` class. This should not be
+    confused with the :class:`~cms.toolbar_base.CMSToolbar`, the base class for *toolbar modifier
+    classes* in other applications, that add items to and otherwise manipulates the toolbar.
+
+    It is strongly recommended that you **only** interact with the toolbar in your own code via:
+
+    #. the APIs documented here
+    #. toolbar modifier classes based on :class:`~cms.toolbar_base.CMSToolbar`
+
+    Several of the following methods to create and add objects other objects to the toolbar are
+    inherited from :class:`~cms.toolbar.items.ToolbarAPIMixin`.
+    """
+
+    def __init__(self, request, request_path=None, _async=False):
+        super().__init__()
+        self._async = _async
         self.right_items = []
         self.left_items = []
         self.last_left_items = []
@@ -51,37 +162,25 @@ class CMSToolbar(ToolbarAPIMixin):
         self.redirect_url = None
         self.request = None
         self.is_staff = None
-        self.edit_mode = None
-        self.edit_mode_url_on = get_cms_setting('CMS_TOOLBAR_URL__EDIT_ON')
-        self.edit_mode_url_off = get_cms_setting('CMS_TOOLBAR_URL__EDIT_OFF')
-        self.disable_url = get_cms_setting('CMS_TOOLBAR_URL__DISABLE')
-        self.build_mode = None
-        self.use_draft = None
-        self.show_toolbar = None
-        self.login_form = None
         self.clipboard = None
-        self.language = None
         self.toolbar_language = None
+        self.toolbar_language_bidi = None
         self.show_toolbar = True
-        self.init_toolbar(request)
+        self.init_toolbar(request, request_path=request_path)
         # Internal attribute to track whether we can cache
         # a response from the current request.
         # This attribute is modified by the placeholder rendering
         # mechanism in case a placeholder rendered by the current
         # request cannot be cached.
-        self._cache_disabled = self.edit_mode or self.show_toolbar
+        self._cache_disabled = self.edit_mode_active or self.show_toolbar
 
-        with force_language(self.language):
+        with force_language(self.request_language):
             try:
-                decorator = resolve(self.request.path_info).func
+                decorator = resolve(self.request_path).func
                 try:
                     # If the original view is decorated we try to extract the real function
                     # module instead of the decorator's one
-                    if decorator and getattr(decorator, 'func_closure', False):
-                        # python 2
-                        self.app_name = decorator.func_closure[0].cell_contents.__module__
-                    elif decorator and getattr(decorator, '__closure__', False):
-                        # python 3
+                    if decorator and getattr(decorator, '__closure__', False):
                         self.app_name = decorator.__closure__[0].cell_contents.__module__
                     else:
                         raise AttributeError()
@@ -100,27 +199,46 @@ class CMSToolbar(ToolbarAPIMixin):
             parts.pop()
 
         self.toolbars = OrderedDict()
+
         for key in toolbars:
-            toolbar = toolbars[key](self.request, self, toolbars[key].check_current_app(key, self.app_name), self.app_name)
+            is_current_app = toolbars[key].check_current_app(key, self.app_name)
+            toolbar = toolbars[key](
+                request=self.request,
+                toolbar=self,
+                is_current_app=is_current_app,
+                app_path=self.app_name,
+            )
             self.toolbars[key] = toolbar
 
-    def init_toolbar(self, request):
+    def init_toolbar(self, request, request_path=None):
         self.request = request
+        self.request_path = request_path or request.path_info  # TODO: Used to be request.path. Why?
         self.is_staff = self.request.user.is_staff
-        self.edit_mode = self.is_staff and self.request.session.get('cms_edit', False)
-        self.build_mode = self.is_staff and self.request.session.get('cms_build', False)
-        self.use_draft = self.is_staff and self.edit_mode or self.build_mode
-        self.show_toolbar = self.is_staff or self.request.session.get('cms_edit', False)
-        self.login_form = CMSToolbarLoginForm(request=request)
-        if self.request.session.get('cms_toolbar_disabled', False):
-            self.show_toolbar = False
-        if settings.USE_I18N:
-            self.language = get_language_from_request(request)
-        else:
-            self.language = settings.LANGUAGE_CODE
+        self.show_toolbar = self.is_staff
+
+        anonymous_on = get_cms_setting('TOOLBAR_ANONYMOUS_ON')
+        enable_toolbar = get_cms_setting('CMS_TOOLBAR_URL__ENABLE')
+        disable_toolbar = get_cms_setting('CMS_TOOLBAR_URL__DISABLE')
+
+        # Handle showing the toolbar for anonymous users when they supply
+        # the enable toolbar parameter
+        if (anonymous_on and request.user.is_anonymous) and enable_toolbar in self.request.GET:
+            self.show_toolbar = True
+
+        if self.show_toolbar:
+            edit_mode = (
+                self._resolver_match
+                and self._resolver_match.url_name == 'cms_placeholder_render_object_edit'
+            )
+            if enable_toolbar in self.request.GET or edit_mode:
+                self.show_toolbar = True
+            elif disable_toolbar in self.request.GET:
+                self.show_toolbar = False
+            elif self.request.session.get('cms_toolbar_disabled', False):
+                self.show_toolbar = False
 
         # We need to store the current language in case the user's preferred language is different.
-        self.toolbar_language = self.language
+        self.toolbar_language = self.request_language
 
         if self.is_staff:
             user_settings = self.user_settings
@@ -128,9 +246,10 @@ class CMSToolbar(ToolbarAPIMixin):
                     not settings.USE_I18N and user_settings.language == settings.LANGUAGE_CODE):
                 self.toolbar_language = user_settings.language
             else:
-                user_settings.language = self.language
+                user_settings.language = self.request_language
                 user_settings.save()
             self.clipboard = user_settings.clipboard
+        self.toolbar_language_bidi = self.toolbar_language in settings.LANGUAGES_BIDI
 
         if hasattr(self, 'toolbars'):
             for key, toolbar in self.toolbars.items():
@@ -141,10 +260,17 @@ class CMSToolbar(ToolbarAPIMixin):
         return self.get_user_settings()
 
     @cached_property
-    def content_renderer(self):
-        from cms.plugin_rendering import ContentRenderer
+    def clipboard_plugin(self):
+        if not self.clipboard:
+            return None
 
-        return ContentRenderer(request=self.request)
+        try:
+            plugin = self.clipboard.get_plugins().select_related('placeholder')[0]
+        except IndexError:
+            bound_plugin = None
+        else:
+            bound_plugin = plugin.get_bound_plugin()
+        return bound_plugin
 
     def get_user_settings(self):
         user_settings = None
@@ -155,7 +281,7 @@ class CMSToolbar(ToolbarAPIMixin):
                 placeholder = Placeholder.objects.create(slot="clipboard")
                 user_settings = UserSettings.objects.create(
                     clipboard=placeholder,
-                    language=self.language,
+                    language=self.request_language,
                     user=self.request.user,
                 )
         return user_settings
@@ -169,20 +295,6 @@ class CMSToolbar(ToolbarAPIMixin):
             toolbars.insert(0, basic_toolbar[0])
         return toolbars
 
-    def render_addons(self, context):
-        addons = []
-        sorted_toolbars = self._reorder_toolbars()
-        for toolbar in sorted_toolbars:
-            addons.extend(toolbar.render_addons(context))
-        return ''.join(addons)
-
-    def post_template_render_addons(self, context):
-        addons = []
-        sorted_toolbars = self._reorder_toolbars()
-        for toolbar in sorted_toolbars:
-            addons.extend(toolbar.post_template_render_addons(context))
-        return ''.join(addons)
-
     @property
     def csrf_token(self):
         token = get_token(self.request)
@@ -191,12 +303,17 @@ class CMSToolbar(ToolbarAPIMixin):
     # Public API
 
     def get_menu(self, key, verbose_name=None, side=LEFT, position=None):
+        """Will return the ``Menu`` identified with :option:`key`, or ``None``."""
         self.populate()
         if key in self.menus:
             return self.menus[key]
         return None
 
     def get_or_create_menu(self, key, verbose_name=None, disabled=False, side=LEFT, position=None):
+        """
+        If a :class:`~cms.toolbar.items.Menu` with :option:`key` already exists, this method will
+        return that menu. Otherwise it will create a menu with the ``key`` identifier.
+        """
         self.populate()
         if key in self.menus:
             menu = self.menus[key]
@@ -215,6 +332,7 @@ class CMSToolbar(ToolbarAPIMixin):
 
     def add_button(self, name, url, active=False, disabled=False, extra_classes=None, extra_wrapper_classes=None,
                    side=LEFT, position=None):
+        """Adds a :class:`~cms.toolbar.items.Button` to the toolbar."""
         self.populate()
         item = ButtonList(extra_classes=extra_wrapper_classes, side=side)
         item.add_button(name, url, active=active, disabled=disabled, extra_classes=extra_classes)
@@ -222,22 +340,30 @@ class CMSToolbar(ToolbarAPIMixin):
         return item
 
     def add_modal_button(self, name, url, active=False, disabled=False, extra_classes=None, extra_wrapper_classes=None,
-                   side=LEFT, position=None, on_close=REFRESH_PAGE):
+                         side=LEFT, position=None, on_close=REFRESH_PAGE):
+        """Adds a :class:`~cms.toolbar.items.ModalButton` to the toolbar."""
         self.populate()
         item = ButtonList(extra_classes=extra_wrapper_classes, side=side)
-        item.add_modal_button(name, url, active=active, disabled=disabled, extra_classes=extra_classes, on_close=on_close)
+        item.add_modal_button(
+            name, url, active=active, disabled=disabled, extra_classes=extra_classes, on_close=on_close
+        )
         self.add_item(item, position=position)
         return item
 
-    def add_sideframe_button(self, name, url, active=False, disabled=False, extra_classes=None, extra_wrapper_classes=None,
-                   side=LEFT, position=None, on_close=None):
+    def add_sideframe_button(self, name, url, active=False, disabled=False, extra_classes=None,
+                             extra_wrapper_classes=None, side=LEFT, position=None, on_close=None):
+        """Adds a :class:`~cms.toolbar.items.SideframeButton` to the toolbar."""
+
         self.populate()
         item = ButtonList(extra_classes=extra_wrapper_classes, side=side)
-        item.add_sideframe_button(name, url, active=active, disabled=disabled, extra_classes=extra_classes, on_close=on_close)
+        item.add_sideframe_button(
+            name, url, active=active, disabled=disabled, extra_classes=extra_classes, on_close=on_close
+        )
         self.add_item(item, position=position)
         return item
 
     def add_button_list(self, identifier=None, extra_classes=None, side=LEFT, position=None):
+        """Adds an (empty) :class:`~cms.toolbar.items.ButtonList` to the toolbar and returns it."""
         self.populate()
         item = ButtonList(identifier, extra_classes=extra_classes, side=side)
         self.add_item(item, position=position)
@@ -247,9 +373,12 @@ class CMSToolbar(ToolbarAPIMixin):
         if not self.obj:
             self.obj = obj
 
+    def get_object(self):
+        return self.obj
+
     def get_object_model(self):
         if self.obj:
-            return "{0}.{1}".format(self.obj._meta.app_label, self.obj._meta.object_name).lower()
+            return f"{self.obj._meta.app_label}.{self.obj._meta.object_name}".lower()
         return ''
 
     def get_object_pk(self):
@@ -257,30 +386,35 @@ class CMSToolbar(ToolbarAPIMixin):
             return self.obj.pk
         return ''
 
-    def get_object_public_url(self):
+    def get_object_preview_url(self):
         if self.obj:
-            with force_language(self.language):
-                try:
-                    return self.obj.get_public_url()
-                except:
-                    pass
+            return get_object_preview_url(self.obj, language=self.request_language)
         return ''
 
-    def get_object_draft_url(self):
+    def get_object_edit_url(self):
         if self.obj:
-            with force_language(self.language):
-                try:
-                    return self.obj.get_draft_url()
-                except:
-                    try:
-                        return self.obj.get_absolute_url()
-                    except:
-                        pass
+            return get_object_edit_url(self.obj, language=self.request_language)
         return ''
+
+    def get_object_structure_url(self):
+        if self.obj:
+            return get_object_structure_url(self.obj, language=self.request_language)
+        return ''
+
+    def object_is_editable(self, obj=None):
+        obj = obj or self.obj
+        if obj:
+            if hasattr(obj, "is_editable"):
+                # Object can decide itself
+                return obj.is_editable(self.request)
+            return True
+        return False
 
     # Internal API
 
     def _add_item(self, item, position=None):
+        item.toolbar = self
+
         if item.right:
             if position and position < 0:
                 target = self.last_right_items
@@ -326,9 +460,15 @@ class CMSToolbar(ToolbarAPIMixin):
         items = self.right_items + list(reversed(self.last_right_items))
         return items
 
+    @cached_property
+    def media(self):
+        self.populate()
+        toolbars = self.toolbars.values()
+        return functools.reduce(operator.add, (toolbar.media for toolbar in toolbars))
+
     def populate(self):
         """
-        Get the CMS items on the toolbar
+        Populates the toolbar with the CMS items.
         """
         if self.populated:
             return
@@ -338,8 +478,6 @@ class CMSToolbar(ToolbarAPIMixin):
         # when toolbar is used in the cms_toolbar templatetag
         if not self.request.user.is_staff:
             return
-        if self.request.session.get('cms_log_latest', False):
-            del self.request.session['cms_log_latest']
         self._call_toolbar('populate')
 
     def post_template_populate(self):
@@ -353,71 +491,90 @@ class CMSToolbar(ToolbarAPIMixin):
             return
         self._call_toolbar('post_template_populate')
 
-    def request_hook(self):
-        response = self._call_toolbar('request_hook')
-        if isinstance(response, HttpResponse):
-            return response
-
-        if self.request.method != 'POST':
-            return self._request_hook_get()
-        else:
-            return self._request_hook_post()
-
-    def _request_hook_get(self):
-        if 'cms-toolbar-logout' in self.request.GET:
-            logout(self.request)
-            return HttpResponseRedirect(self.request.path_info)
-
-    def _get_login_redirect_to(self):
-        redirect_to = self.request.GET.get(REDIRECT_FIELD_NAME)
-
-        if is_safe_url(url=redirect_to, host=self.request.get_host()):
-            return redirect_to
-        return
-
-    def _request_hook_post(self):
-        # login hook
-        if 'cms-toolbar-login' in self.request.GET:
-            redirect_to = self._get_login_redirect_to()
-            self.login_form = CMSToolbarLoginForm(request=self.request, data=self.request.POST)
-
-            if self.login_form.is_valid():
-                login(self.request, self.login_form.user_cache)
-                redirect_to = redirect_to or self.request.path_info
-                return HttpResponseRedirect(redirect_to)
-            elif redirect_to:
-                return HttpResponseRedirect(redirect_to + "?cms-toolbar-login-error=1")
-
     def _call_toolbar(self, func_name):
         with force_language(self.toolbar_language):
             first = ('cms.cms_toolbars.BasicToolbar', 'cms.cms_toolbars.PlaceholderToolbar')
+
             for key in first:
                 toolbar = self.toolbars.get(key)
                 if not toolbar:
                     continue
-                result = getattr(toolbar, func_name)()
-                if isinstance(result, HttpResponse):
-                    return result
+                getattr(toolbar, func_name)()
+
             for key in self.toolbars:
                 if key in first:
                     continue
                 toolbar = self.toolbars[key]
-                result = getattr(toolbar, func_name)()
-                if isinstance(result, HttpResponse):
-                    return result
+                getattr(toolbar, func_name)()
+
+    def get_render_context(self):
+        if self.structure_mode_active and not self.uses_legacy_structure_mode:
+            # User has explicitly requested structure mode
+            # and the object (page, blog, etc..) allows for the non-legacy structure mode
+            renderer = self.structure_renderer
+        else:
+            renderer = self.get_content_renderer()
+
+        context = {
+            'cms_toolbar': self,
+            'object_is_immutable': not self.object_is_editable(),
+            'cms_renderer': renderer,
+            'cms_edit_url': self.get_object_edit_url(),
+            'cms_preview_url': self.get_object_preview_url(),
+            'cms_structure_url': self.get_object_structure_url(),
+            'cms_version': __version__,
+            'django_version': DJANGO_VERSION,
+            'login_form': CMSToolbarLoginForm(),
+            'python_version': PYTHON_VERSION,
+        }
+        return context
+
+    def render(self):
+        self.populate()
+        self.post_template_populate()
+
+        context = self.get_render_context()
+
+        with force_language(self.toolbar_language):
+            return render_to_string('cms/toolbar/toolbar.html', context, request=self.request)
+
+    def render_with_structure(self, context, nodelist):
+        self.populate()
+
+        context.update(self.get_render_context())
+
+        with force_language(self.toolbar_language):
+            # needed to populate the context with sekizai content
+            render_to_string('cms/toolbar/toolbar_javascript.html', flatten_context(context))
+
+        # render everything below the tag
+        rendered_contents = nodelist.render(context)
+
+        self.post_template_populate()
+
+        with force_language(self.toolbar_language):
+            # render the toolbar content
+            toolbar = render_to_string('cms/toolbar/toolbar_with_structure.html', flatten_context(context))
+        # return the toolbar content and the content below
+        return f'{toolbar}\n{rendered_contents}'
 
 
-class EmptyToolbar(object):
+# Add toolbar mixins from extensions to toolbar
+CMSToolbar = type("CMSToolbar", tuple(cms_toolbar_extensions + [CMSToolbarBase]), dict())
+
+
+class EmptyToolbar(BaseToolbar):
     is_staff = False
-    edit_mode = False
     show_toolbar = False
+
+    # Backwards compatibility
+    edit_mode = False
+
     _cache_disabled = True
 
     def __init__(self, request):
         self.request = request
+        super().__init__()
 
-    @cached_property
-    def content_renderer(self):
-        from cms.plugin_rendering import ContentRenderer
-
-        return ContentRenderer(request=self.request)
+    def get_object(self):
+        return None

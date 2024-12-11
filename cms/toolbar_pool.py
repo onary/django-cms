@@ -1,13 +1,13 @@
-# -*- coding: utf-8 -*-
 from collections import OrderedDict
+
+from django.core.exceptions import ImproperlyConfigured
+from django.utils.module_loading import autodiscover_modules, import_string
 
 from cms.exceptions import ToolbarAlreadyRegistered, ToolbarNotRegistered
 from cms.utils.conf import get_cms_setting
-from cms.utils.django_load import load, iterload_objects
-from django.core.exceptions import ImproperlyConfigured
 
 
-class ToolbarPool(object):
+class ToolbarPool:
     def __init__(self):
         self.toolbars = OrderedDict()
         self._discovered = False
@@ -16,15 +16,16 @@ class ToolbarPool(object):
     def discover_toolbars(self):
         if self._discovered:
             return
-            #import all the modules
+            # import all the modules
         toolbars = get_cms_setting('TOOLBARS')
         if toolbars:
-            for cls in iterload_objects(toolbars):
+            for path in toolbars:
+                cls = import_string(path)
                 self.force_register = True
                 self.register(cls)
                 self.force_register = False
         else:
-            load('cms_toolbars')
+            autodiscover_modules('cms_toolbars')
         self._discovered = True
 
     def clear(self):
@@ -35,18 +36,19 @@ class ToolbarPool(object):
         if not self.force_register and get_cms_setting('TOOLBARS'):
             return toolbar
         from cms.toolbar_base import CMSToolbar
+
         # validate the app
         if not issubclass(toolbar, CMSToolbar):
             raise ImproperlyConfigured('CMS Toolbar must inherit '
                                        'cms.toolbar_base.CMSToolbar, %r does not' % toolbar)
-        name = "%s.%s" % (toolbar.__module__, toolbar.__name__)
+        name = f"{toolbar.__module__}.{toolbar.__name__}"
         if name in self.toolbars.keys():
             raise ToolbarAlreadyRegistered("[%s] a toolbar with this name is already registered" % name)
         self.toolbars[name] = toolbar
         return toolbar
 
     def unregister(self, toolbar):
-        name = '%s.%s' % (toolbar.__module__, toolbar.__name__)
+        name = f'{toolbar.__module__}.{toolbar.__name__}'
         if name not in self.toolbars:
             raise ToolbarNotRegistered('The toolbar %s is not registered' % name)
         del self.toolbars[name]

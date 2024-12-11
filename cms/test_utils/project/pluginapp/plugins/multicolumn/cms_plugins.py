@@ -1,4 +1,4 @@
-from cms.models import CMSPlugin
+from cms.api import add_plugin
 from cms.plugin_base import CMSPluginBase
 from cms.plugin_pool import plugin_pool
 
@@ -16,18 +16,16 @@ class MultiColumnPlugin(CMSPluginBase):
     form = MultiColumnForm
 
     def save_model(self, request, obj, form, change):
-        response = super(MultiColumnPlugin, self).save_model(
+        response = super().save_model(
             request, obj, form, change
         )
         for x in range(int(form.cleaned_data['create'])):
-            col = CMSPlugin(
-                parent=obj,
+            add_plugin(
                 placeholder=obj.placeholder,
+                plugin_type=ColumnPlugin.__name__,
                 language=obj.language,
-                position=CMSPlugin.objects.filter(parent=obj).count(),
-                plugin_type=ColumnPlugin.__name__
+                target=obj,
             )
-            col.save()
         return response
 
 

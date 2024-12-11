@@ -2,9 +2,8 @@
  * Copyright https://github.com/divio/django-cms
  */
 
-var $ = require('jquery');
-var Class = require('classjs');
-var SimpleMap = require('./simplemap');
+import $ from 'jquery';
+import Class from 'classjs';
 
 /**
  * Tracks the changes done inside the modal form.
@@ -21,7 +20,7 @@ var ChangeTracker = new Class({
         var that = this;
 
         that.state = {
-            fields: new SimpleMap(),
+            fields: new Map(),
             formChanged: false
         };
 
@@ -36,10 +35,15 @@ var ChangeTracker = new Class({
     },
 
     _setupEvents: function _setupEvents() {
-        this.ui.iframe.contents()
-            .find('.change-form form')
-            .find('input, textarea, select')
-            .on('change.cms.tracker keydown.cms.tracker', this._trackChange.bind(this));
+        try {
+            this.ui.iframe
+                .contents()
+                .find('.change-form form')
+                .find('input, textarea, select')
+                .on('change.cms.tracker keydown.cms.tracker', this._trackChange.bind(this));
+        } catch (e) {
+            // there can be cases when the iframe contents don't exist
+        }
     },
 
     /**
@@ -117,13 +121,13 @@ var ChangeTracker = new Class({
 
             if (el.is('[multiple]')) {
                 value = [];
-                options.each(function () {
+                options.each(function() {
                     if (this.defaultSelected) {
                         value.push($(this).val());
                     }
                 });
             } else {
-                options.each(function () {
+                options.each(function() {
                     if (this.defaultSelected) {
                         value = $(this).val();
                     }
@@ -156,7 +160,7 @@ var ChangeTracker = new Class({
         var isEditorChanged = false;
 
         if (win && win.CKEDITOR && win.CKEDITOR.instances) {
-            isEditorChanged = Object.keys(win.CKEDITOR.instances).some(function (key) {
+            isEditorChanged = Object.keys(win.CKEDITOR.instances).some(function(key) {
                 return win.CKEDITOR.instances[key].checkDirty();
             });
         }
@@ -165,4 +169,4 @@ var ChangeTracker = new Class({
     }
 });
 
-module.exports = ChangeTracker;
+export default ChangeTracker;

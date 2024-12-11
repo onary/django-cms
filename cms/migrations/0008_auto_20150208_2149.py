@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 
 from django.db import models, migrations
@@ -14,7 +13,7 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='title',
             name='redirect',
-            field=models.CharField(max_length=2048, null=True, verbose_name='redirect', blank=True),
+            field=models.CharField(max_length=2048, null=True, help_text='Redirects to this URL.', verbose_name='redirect', blank=True),
             preserve_default=True,
         ),
     ]

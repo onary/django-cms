@@ -44,6 +44,6 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RunPython(update_titles, migrations.RunPython.noop),
-        migrations.RunPython(set_page_url, migrations.RunPython.noop),
+        migrations.RunPython(update_titles),
+        migrations.RunPython(set_page_url),
     ]

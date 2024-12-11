@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from copy import deepcopy
 
 from django.contrib import admin
@@ -9,13 +8,16 @@ from django.contrib.sites.models import Site
 from django.db import OperationalError
 from django.utils.translation import gettext_lazy as _
 
-from cms.admin.forms import GlobalPagePermissionAdminForm, PagePermissionInlineAdminForm, ViewRestrictionInlineAdminForm
+from cms.admin.forms import (
+    GlobalPagePermissionAdminForm,
+    PagePermissionInlineAdminForm,
+    ViewRestrictionInlineAdminForm,
+)
 from cms.exceptions import NoPermissionsException
-from cms.models import PagePermission, GlobalPagePermission
-from cms.utils import permissions
+from cms.models import GlobalPagePermission, PagePermission
+from cms.utils import page_permissions, permissions
 from cms.utils.conf import get_cms_setting
 from cms.utils.helpers import classproperty
-
 
 PERMISSION_ADMIN_INLINES = []
 
@@ -34,9 +36,20 @@ class PagePermissionInlineAdmin(TabularInline):
     model = PagePermission
     # use special form, so we can override of user and group field
     form = PagePermissionInlineAdminForm
-    classes = ['collapse', 'collapsed']
     extra = 0  # edit page load time boost
     show_with_view_permissions = False
+
+    def has_change_permission(self, request, obj=None):
+        if not obj:
+            return False
+        return page_permissions.user_can_change_page_permissions(
+            request.user,
+            page=obj,
+            site=obj.site,
+        )
+
+    def has_add_permission(self, request, obj=None):
+        return self.has_change_permission(request, obj)
 
     @classproperty
     def raw_id_fields(cls):
@@ -75,7 +88,7 @@ class PagePermissionInlineAdmin(TabularInline):
         """
         Some fields may be excluded here. User can change only
         permissions which are available for him. E.g. if user does not haves
-        can_publish flag, he can't change assign can_publish permissions.
+        can_change flag, he can't change assign can_change permissions.
         """
         exclude = self.exclude or []
         if obj:
@@ -92,7 +105,7 @@ class PagePermissionInlineAdmin(TabularInline):
                 exclude.append('can_move_page')
 
         kwargs['exclude'] = exclude
-        formset_cls = super(PagePermissionInlineAdmin, self).get_formset(request, obj=obj, **kwargs)
+        formset_cls = super().get_formset(request, obj=obj, **kwargs)
         qs = self.get_queryset(request)
         if obj is not None:
             qs = qs.filter(page=obj)

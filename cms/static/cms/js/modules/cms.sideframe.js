@@ -2,10 +2,10 @@
  * Copyright https://github.com/divio/django-cms
  */
 
-var $ = require('jquery');
-var Class = require('classjs');
-var Helpers = require('./cms.base').API.Helpers;
-var KEYS = require('./cms.base').KEYS;
+import $ from 'jquery';
+import Class from 'classjs';
+import { Helpers, KEYS } from './cms.base';
+import { showLoader, hideLoader } from './loader';
 
 /**
  * The sideframe is triggered via API calls from the backend either
@@ -17,7 +17,6 @@ var KEYS = require('./cms.base').KEYS;
  * @uses CMS.API.Helpers
  */
 var Sideframe = new Class({
-
     options: {
         onClose: false,
         sideframeDuration: 300
@@ -76,17 +75,17 @@ var Sideframe = new Class({
             forward: []
         };
 
-        this.ui.close.off(this.click).on(this.click, function () {
+        this.ui.close.off(this.click).on(this.click, function() {
             that.close();
         });
 
         // close sideframe when clicking on the dimmer
-        this.ui.dimmer.off(this.click).on(this.click, function () {
+        this.ui.dimmer.off(this.click).on(this.click, function() {
             that.close();
         });
 
         // attach events to the back button
-        this.ui.historyBack.off(this.click).on(this.click, function () {
+        this.ui.historyBack.off(this.click).on(this.click, function() {
             if (that.ui.historyBack.hasClass('cms-icon-disabled')) {
                 return false;
             }
@@ -94,7 +93,7 @@ var Sideframe = new Class({
         });
 
         // attach events to the forward button
-        this.ui.historyForward.off(this.click).on(this.click, function () {
+        this.ui.historyForward.off(this.click).on(this.click, function() {
             if (that.ui.historyForward.hasClass('cms-icon-disabled')) {
                 return false;
             }
@@ -117,13 +116,13 @@ var Sideframe = new Class({
             throw new Error('The arguments passed to "open" were invalid.');
         }
 
+        // Fail gracefully when open is called when disabled
+        if (CMS.settings.sideframe_enabled === false) {
+            return false;
+        }
+
         var url = opts.url;
         var animate = opts.animate;
-
-        // setup internals
-        var language = 'language=' + CMS.config.request.language;
-        var page_id = 'page_id=' + CMS.config.request.page_id;
-        var params = [];
 
         // We have to rebind events every time we open a sideframe
         // because the event handlers contain references to the instance
@@ -135,31 +134,12 @@ var Sideframe = new Class({
         this.ui.dimmer.show();
         this.ui.frame.addClass('cms-loader');
 
-        // istanbul ignore else: always show loader
-        if (CMS.API && CMS.API.Toolbar) {
-            CMS.API.Toolbar.showLoader();
-        }
+        showLoader();
 
-        // we need to modify the url appropriately to pass
-        // language and page to the params
-        if (url.indexOf(CMS.config.request.tree) >= 0) {
-            if (CMS.config.request.language) {
-                params.push(language);
-            }
-            if (CMS.config.request.page_id) {
-                params.push(page_id);
-            }
-        }
-
-        url = Helpers.makeURL(url, params);
+        url = Helpers.makeURL(url);
 
         // load the iframe
         this._content(url);
-
-        // The user has performed an action that requires the
-        // sideframe to be shown, this intent outweighs any
-        // previous intent to minimize the frame.
-        CMS.settings.sideframe.hidden = false;
 
         // show iframe
         this._show(animate);
@@ -180,7 +160,7 @@ var Sideframe = new Class({
         var holder = this.ui.frame;
         var contents;
         var body;
-        var iOS = (/iPhone|iPod|iPad/).test(navigator.userAgent);
+        var iOS = /iPhone|iPod|iPad/.test(navigator.userAgent);
 
         // istanbul ignore next
         /**
@@ -205,18 +185,18 @@ var Sideframe = new Class({
             var w = that.ui.sideframe.width();
 
             that.ui.sideframe.animate({ width: w + 1 }, 0);
-            setTimeout(function () {
+            setTimeout(function() {
                 that.ui.sideframe.animate({ width: w }, 0);
                 // eslint-disable-next-line no-magic-numbers
                 that.ui.shim.css('z-index', 20);
-                setTimeout(function () {
+                setTimeout(function() {
                     that.ui.shim.css('z-index', 1);
                 }, 0);
             }, 0);
         }
 
         // attach load event to iframe
-        iframe.hide().on('load', function () {
+        iframe.hide().on('load', function() {
             // check if iframe can be accessed
             try {
                 iframe.contents();
@@ -250,31 +230,56 @@ var Sideframe = new Class({
                 body.addClass('cms-debug');
             }
 
-            // save url in settings
-            CMS.settings.sideframe.url = iframe[0].contentWindow.location.href;
-            CMS.settings = Helpers.setSettings(CMS.settings);
-
             // This essentially hides the toolbar dropdown when
             // click happens inside of a sideframe iframe
-            contents.on(that.click, function () {
+            contents.on(that.click, function() {
                 // using less specific namespace event because
                 // toolbar dropdowns closing handlers are attached to `click.cms.toolbar`
                 $(document).trigger('click.cms');
             });
 
             // attach close event
-            body.on('keydown.cms', function (e) {
+            body.on('keydown.cms', function(e) {
                 if (e.keyCode === KEYS.ESC) {
                     that.close();
                 }
             });
 
             // adding django hacks
-            contents.find('.viewsitelink').attr('target', '_top');
+            contents.find('.viewsitelink').attr('target', '_top').on('click', () => {
+                that.close();
+            });
 
             // update history
             that._addToHistory(this.contentWindow.location.href);
+            hideLoader();
         });
+
+        let iframeUrl = url;
+
+        // a case when you never visited the site and first went to admin and then immediately to the page
+        // and then clicked to open a sideframe
+        CMS.settings.sideframe = CMS.settings.sideframe || {};
+        CMS.settings.sideframe.url = iframeUrl;
+        CMS.settings.sideframe.hidden = false;
+        CMS.settings.sideframe_enabled = true;
+        CMS.settings = Helpers.setSettings(window.CMS.settings);
+
+        this.pageLoadInterval = setInterval(() => {
+            try {
+                const currentUrl = iframe[0].contentWindow.location.href;
+
+                // extra case with about:blank is needed to get rid of a race
+                // condition when another page is opened while sideframe url
+                // is still loading and browser last reported url was about:blank
+                if (currentUrl !== iframeUrl && currentUrl !== 'about:blank') {
+                    // save url in settings
+                    window.CMS.settings.sideframe.url = currentUrl;
+                    window.CMS.settings = Helpers.setSettings(window.CMS.settings);
+                    iframeUrl = currentUrl;
+                }
+            } catch (e) {}
+        }, 100); // eslint-disable-line
 
         // clear the frame (removes all the handlers)
         holder.empty();
@@ -297,24 +302,19 @@ var Sideframe = new Class({
 
         // otherwise do normal behaviour
         if (animate) {
-            this.ui.sideframe.animate({
-                width: width,
-                overflow: 'visible'
-            }, this.options.sideframeDuration);
+            this.ui.sideframe.animate(
+                {
+                    width: width,
+                    overflow: 'visible'
+                },
+                this.options.sideframeDuration
+            );
         } else {
             this.ui.sideframe.css('width', width);
         }
 
-        // istanbul ignore else: always trigger API handlers
-        if (CMS.API && CMS.API.Toolbar) {
-            // FIXME: initialization needs to be done after our libs are loaded
-            CMS.API.Toolbar.open();
-            CMS.API.Toolbar.hideLoader();
-            CMS.API.Toolbar._lock(true);
-        }
-
         // add esc close event
-        this.ui.body.off('keydown.cms.close').on('keydown.cms.close', function (e) {
+        this.ui.body.off('keydown.cms.close').on('keydown.cms.close', function(e) {
             if (e.keyCode === KEYS.ESC) {
                 that.options.onClose = null;
                 that.close();
@@ -338,17 +338,16 @@ var Sideframe = new Class({
         // update settings
         CMS.settings.sideframe = {
             url: null,
-            hidden: false
+            hidden: true
         };
         CMS.settings = Helpers.setSettings(CMS.settings);
-
-        // check for reloading
-        Helpers.reloadBrowser(this.options.onClose, false, true);
 
         // trigger hide animation
         this._hide({
             duration: this.options.sideframeDuration / 2
         });
+
+        clearInterval(this.pageLoadInterval);
     },
 
     /**
@@ -366,15 +365,10 @@ var Sideframe = new Class({
             duration = opts.duration;
         }
 
-        this.ui.sideframe.animate({ width: 0 }, duration, function () {
+        this.ui.sideframe.animate({ width: 0 }, duration, function() {
             $(this).hide();
         });
         this.ui.frame.removeClass('cms-loader');
-
-        // istanbul ignore else
-        if (CMS.API && CMS.API.Toolbar) {
-            CMS.API.Toolbar._lock(false);
-        }
 
         this.ui.body.off('keydown.cms.close');
 
@@ -452,4 +446,4 @@ var Sideframe = new Class({
     }
 });
 
-module.exports = Sideframe;
+export default Sideframe;

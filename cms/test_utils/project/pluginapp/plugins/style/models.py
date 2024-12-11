@@ -1,21 +1,14 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
-
 from django.db import models
 
-
 from cms.models import CMSPlugin
-
 
 CLASS_CHOICES = ['container', 'content', 'teaser']
 CLASS_CHOICES = tuple((entry, entry) for entry in CLASS_CHOICES)
 
 TAG_CHOICES = [
-    'div', 'article', 'section', 'header', 'footer', 'aside',
-     'h1', 'h2', 'h3', 'h4', 'h5', 'h6'
+    'div', 'article', 'section', 'header', 'footer', 'aside', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'
 ]
 TAG_CHOICES = tuple((entry, entry) for entry in TAG_CHOICES)
-
 
 
 class Style(CMSPlugin):
@@ -59,7 +52,7 @@ class Style(CMSPlugin):
         if self.label:
             display.append(self.label)
         if self.tag_type:
-            display.append('<{0}>'.format(self.tag_type))
+            display.append(f'<{self.tag_type}>')
         if self.class_name:
             classes.append(self.class_name)
         if self.additional_classes:

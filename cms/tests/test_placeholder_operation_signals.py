@@ -1,27 +1,25 @@
-# -*- coding: utf-8 -*-
-from cms.api import add_plugin, create_page
-from cms.models import Page, Placeholder, UserSettings
+from cms.api import add_plugin
+from cms.models import Placeholder, UserSettings
 from cms.operations import (
     ADD_PLUGIN,
     ADD_PLUGINS_FROM_PLACEHOLDER,
-    CLEAR_PLACEHOLDER,
     CHANGE_PLUGIN,
-    DELETE_PLUGIN,
+    CLEAR_PLACEHOLDER,
     CUT_PLUGIN,
+    DELETE_PLUGIN,
     MOVE_PLUGIN,
-    PASTE_PLUGIN,
     PASTE_PLACEHOLDER,
+    PASTE_PLUGIN,
 )
-from cms.signals import pre_placeholder_operation, post_placeholder_operation
+from cms.signals import post_placeholder_operation, pre_placeholder_operation
 from cms.test_utils.testcases import CMSTestCase
-from cms.utils.compat.tests import UnittestCompatMixin
 from cms.test_utils.util.context_managers import signal_tester
 
 
-class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
+class PagePlaceholderTestCase(CMSTestCase):
 
     def _add_plugin(self, placeholder=None, plugin_type='LinkPlugin', language='en'):
-        placeholder = placeholder or self._cms_placeholder
+        placeholder = placeholder or self._placeholder_1
         plugin_data = {
             'LinkPlugin': {'name': 'A Link', 'external_link': 'https://www.django-cms.org'},
             'PlaceholderPlugin': {},
@@ -36,7 +34,7 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
 
     def _get_add_plugin_uri(self, language='en'):
         uri = self.get_add_plugin_uri(
-            placeholder=self._cms_placeholder,
+            placeholder=self._placeholder_1,
             plugin_type='LinkPlugin',
             language=language,
         )
@@ -44,14 +42,14 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
 
     def setUp(self):
         self._admin_user = self.get_superuser()
-        self._cms_page = create_page(
+        self._cms_page = self.create_homepage(
             "home",
             "nav_playground.html",
             "en",
             created_by=self._admin_user,
-            published=False,
         )
-        self._cms_placeholder = self._cms_page.placeholders.get(slot='body')
+        self._placeholder_1 = self._cms_page.get_placeholders("en").get(slot='body')
+        self._placeholder_2 = self._cms_page.get_placeholders("en").get(slot='right-column')
 
     def test_pre_add_plugin(self):
         with signal_tester(pre_placeholder_operation) as env:
@@ -70,7 +68,7 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
             self.assertEqual(call_kwargs['language'], 'en')
             self.assertTrue('token' in call_kwargs)
             self.assertEqual(call_kwargs['origin'], '/en/')
-            self.assertEqual(call_kwargs['placeholder'], self._cms_placeholder)
+            self.assertEqual(call_kwargs['placeholder'], self._placeholder_1)
             self.assertEqual(call_kwargs['plugin'].name, data['name'])
             self.assertEqual(call_kwargs['plugin'].external_link, data['external_link'])
 
@@ -94,15 +92,14 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
             self.assertEqual(post_call_kwargs['language'], 'en')
             self.assertTrue(pre_call_kwargs['token'] == post_call_kwargs['token'])
             self.assertEqual(post_call_kwargs['origin'], '/en/')
-            self.assertEqual(post_call_kwargs['placeholder'], self._cms_placeholder)
+            self.assertEqual(post_call_kwargs['placeholder'], self._placeholder_1)
             self.assertTrue(post_call_kwargs['plugin'].pk)
             self.assertEqual(post_call_kwargs['plugin'].name, data['name'])
             self.assertEqual(post_call_kwargs['plugin'].external_link, data['external_link'])
 
     def test_pre_edit_plugin(self):
         plugin = self._add_plugin()
-        endpoint = self.get_admin_url(Page, 'edit_plugin', plugin.pk)
-        endpoint += '?cms_path=/en/'
+        endpoint = self.get_change_plugin_uri(plugin)
 
         with signal_tester(pre_placeholder_operation) as env:
             data = {'name': 'A Link 2', 'external_link': 'https://www.django-cms.org'}
@@ -119,7 +116,7 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
             self.assertEqual(call_kwargs['language'], 'en')
             self.assertTrue('token' in call_kwargs)
             self.assertEqual(call_kwargs['origin'], '/en/')
-            self.assertEqual(call_kwargs['placeholder'], self._cms_placeholder)
+            self.assertEqual(call_kwargs['placeholder'], self._placeholder_1)
             self.assertEqual(call_kwargs['old_plugin'].name, 'A Link')
             self.assertEqual(call_kwargs['old_plugin'].external_link, data['external_link'])
             self.assertEqual(call_kwargs['new_plugin'].name, data['name'])
@@ -127,8 +124,7 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
 
     def test_post_edit_plugin(self):
         plugin = self._add_plugin()
-        endpoint = self.get_admin_url(Page, 'edit_plugin', plugin.pk)
-        endpoint += '?cms_path=/en/'
+        endpoint = self.get_change_plugin_uri(plugin)
 
         with signal_tester(pre_placeholder_operation, post_placeholder_operation) as env:
             data = {'name': 'A Link 2', 'external_link': 'https://www.django-cms.org'}
@@ -148,7 +144,7 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
             self.assertEqual(post_call_kwargs['language'], 'en')
             self.assertTrue(pre_call_kwargs['token'] == post_call_kwargs['token'])
             self.assertEqual(post_call_kwargs['origin'], '/en/')
-            self.assertEqual(post_call_kwargs['placeholder'], self._cms_placeholder)
+            self.assertEqual(post_call_kwargs['placeholder'], self._placeholder_1)
             self.assertEqual(post_call_kwargs['old_plugin'].name, 'A Link')
             self.assertEqual(post_call_kwargs['old_plugin'].external_link, data['external_link'])
             self.assertEqual(post_call_kwargs['new_plugin'].name, data['name'])
@@ -156,8 +152,7 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
 
     def test_pre_delete_plugin(self):
         plugin = self._add_plugin()
-        endpoint = self.get_admin_url(Page, 'delete_plugin', plugin.pk)
-        endpoint += '?cms_path=/en/'
+        endpoint = self.get_delete_plugin_uri(plugin)
 
         with signal_tester(pre_placeholder_operation) as env:
             with self.login_user_context(self._admin_user):
@@ -174,14 +169,13 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
             self.assertEqual(call_kwargs['language'], 'en')
             self.assertTrue('token' in call_kwargs)
             self.assertEqual(call_kwargs['origin'], '/en/')
-            self.assertEqual(call_kwargs['placeholder'], self._cms_placeholder)
+            self.assertEqual(call_kwargs['placeholder'], self._placeholder_1)
             self.assertEqual(call_kwargs['plugin'].name, 'A Link')
             self.assertEqual(call_kwargs['plugin'].external_link, 'https://www.django-cms.org')
 
     def test_post_delete_plugin(self):
         plugin = self._add_plugin()
-        endpoint = self.get_admin_url(Page, 'delete_plugin', plugin.pk)
-        endpoint += '?cms_path=/en/'
+        endpoint = self.get_delete_plugin_uri(plugin)
 
         with signal_tester(pre_placeholder_operation, post_placeholder_operation) as env:
             with self.login_user_context(self._admin_user):
@@ -201,20 +195,20 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
             self.assertEqual(post_call_kwargs['language'], 'en')
             self.assertTrue(pre_call_kwargs['token'] == post_call_kwargs['token'])
             self.assertEqual(post_call_kwargs['origin'], '/en/')
-            self.assertEqual(post_call_kwargs['placeholder'], self._cms_placeholder)
+            self.assertEqual(post_call_kwargs['placeholder'], self._placeholder_1)
             self.assertEqual(post_call_kwargs['plugin'].name, 'A Link')
             self.assertEqual(post_call_kwargs['plugin'].external_link, 'https://www.django-cms.org')
 
     def test_pre_move_plugin(self):
         plugin = self._add_plugin()
         endpoint = self.get_move_plugin_uri(plugin)
-
         source_placeholder = plugin.placeholder
-        target_placeholder = self._cms_page.placeholders.get(slot='right-column')
 
         data = {
             'plugin_id': plugin.pk,
-            'placeholder_id': target_placeholder.pk,
+            'target_language': 'en',
+            'placeholder_id': self._placeholder_2.pk,
+            'target_position': 1,
         }
 
         with signal_tester(pre_placeholder_operation) as env:
@@ -237,19 +231,19 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
             self.assertEqual(call_kwargs['source_placeholder'], source_placeholder)
             self.assertEqual(call_kwargs['source_parent_id'], plugin.parent_id)
             self.assertEqual(call_kwargs['target_language'], 'en')
-            self.assertEqual(call_kwargs['target_placeholder'], target_placeholder)
+            self.assertEqual(call_kwargs['target_placeholder'], self._placeholder_2)
             self.assertEqual(call_kwargs['target_parent_id'], None)
 
     def test_post_move_plugin(self):
         plugin = self._add_plugin()
         endpoint = self.get_move_plugin_uri(plugin)
-
         source_placeholder = plugin.placeholder
-        target_placeholder = self._cms_page.placeholders.get(slot='right-column')
 
         data = {
             'plugin_id': plugin.pk,
-            'placeholder_id': target_placeholder.pk,
+            'target_language': 'en',
+            'placeholder_id': self._placeholder_2.pk,
+            'target_position': 1,
         }
 
         with signal_tester(pre_placeholder_operation, post_placeholder_operation) as env:
@@ -269,13 +263,13 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
             self.assertTrue(pre_call_kwargs['token'] == post_call_kwargs['token'])
             self.assertEqual(post_call_kwargs['origin'], '/en/')
             self.assertEqual(post_call_kwargs['plugin'].name, 'A Link')
-            self.assertEqual(post_call_kwargs['plugin'].placeholder, target_placeholder)
+            self.assertEqual(post_call_kwargs['plugin'].placeholder, self._placeholder_2)
             self.assertEqual(post_call_kwargs['plugin'].external_link, 'https://www.django-cms.org')
             self.assertEqual(post_call_kwargs['source_language'], 'en')
             self.assertEqual(post_call_kwargs['source_placeholder'], source_placeholder)
             self.assertEqual(post_call_kwargs['source_parent_id'], plugin.parent_id)
             self.assertEqual(post_call_kwargs['target_language'], 'en')
-            self.assertEqual(post_call_kwargs['target_placeholder'], target_placeholder)
+            self.assertEqual(post_call_kwargs['target_placeholder'], self._placeholder_2)
             self.assertEqual(post_call_kwargs['target_parent_id'], None)
 
     def test_pre_cut_plugin(self):
@@ -289,6 +283,7 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
 
         data = {
             'plugin_id': plugin.pk,
+            'target_language': 'en',
             'placeholder_id': user_settings.clipboard_id,
         }
 
@@ -306,12 +301,12 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
             self.assertTrue('token' in call_kwargs)
             self.assertEqual(call_kwargs['origin'], '/en/')
             self.assertEqual(call_kwargs['plugin'].name, 'A Link')
-            self.assertEqual(call_kwargs['plugin'].placeholder, self._cms_placeholder)
+            self.assertEqual(call_kwargs['plugin'].placeholder, self._placeholder_1)
             self.assertEqual(call_kwargs['plugin'].external_link, 'https://www.django-cms.org')
             self.assertEqual(call_kwargs['clipboard'], user_settings.clipboard)
             self.assertEqual(call_kwargs['clipboard_language'], 'en')
             self.assertEqual(call_kwargs['source_language'], 'en')
-            self.assertEqual(call_kwargs['source_placeholder'], self._cms_placeholder)
+            self.assertEqual(call_kwargs['source_placeholder'], self._placeholder_1)
             self.assertEqual(call_kwargs['source_parent_id'], plugin.parent_id)
 
     def test_post_cut_plugin(self):
@@ -325,6 +320,7 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
 
         data = {
             'plugin_id': plugin.pk,
+            'target_language': 'en',
             'placeholder_id': user_settings.clipboard_id,
         }
 
@@ -350,7 +346,7 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
             self.assertEqual(post_call_kwargs['clipboard'], user_settings.clipboard)
             self.assertEqual(post_call_kwargs['clipboard_language'], 'en')
             self.assertEqual(post_call_kwargs['source_language'], 'en')
-            self.assertEqual(post_call_kwargs['source_placeholder'], self._cms_placeholder)
+            self.assertEqual(post_call_kwargs['source_placeholder'], self._placeholder_1)
             self.assertEqual(post_call_kwargs['source_parent_id'], plugin.parent_id)
 
     def test_pre_paste_plugin(self):
@@ -364,9 +360,10 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
 
         data = {
             'plugin_id': plugin.pk,
-            'placeholder_id': self._cms_placeholder.pk,
+            'placeholder_id': self._placeholder_1.pk,
             'move_a_copy': 'true',
-            'plugin_order[]': ['__COPY__'],
+            'target_language': 'en',
+            'target_position': 1,
         }
 
         with signal_tester(pre_placeholder_operation) as env:
@@ -386,7 +383,7 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
             self.assertEqual(call_kwargs['plugin'].placeholder, user_settings.clipboard)
             self.assertEqual(call_kwargs['plugin'].external_link, 'https://www.django-cms.org')
             self.assertEqual(call_kwargs['target_language'], 'en')
-            self.assertEqual(call_kwargs['target_placeholder'], self._cms_placeholder)
+            self.assertEqual(call_kwargs['target_placeholder'], self._placeholder_1)
             self.assertEqual(call_kwargs['target_parent_id'], None)
 
     def test_post_paste_plugin(self):
@@ -400,9 +397,10 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
 
         data = {
             'plugin_id': plugin.pk,
-            'placeholder_id': self._cms_placeholder.pk,
+            'placeholder_id': self._placeholder_1.pk,
+            'target_language': 'en',
             'move_a_copy': 'true',
-            'plugin_order[]': ['__COPY__'],
+            'target_position': 1,
         }
 
         with signal_tester(pre_placeholder_operation, post_placeholder_operation) as env:
@@ -422,10 +420,10 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
             self.assertTrue(pre_call_kwargs['token'] == post_call_kwargs['token'])
             self.assertEqual(post_call_kwargs['origin'], '/en/')
             self.assertEqual(post_call_kwargs['plugin'].name, 'A Link')
-            self.assertEqual(post_call_kwargs['plugin'].placeholder, self._cms_placeholder)
+            self.assertEqual(post_call_kwargs['plugin'].placeholder, self._placeholder_1)
             self.assertEqual(post_call_kwargs['plugin'].external_link, 'https://www.django-cms.org')
             self.assertEqual(post_call_kwargs['target_language'], 'en')
-            self.assertEqual(post_call_kwargs['target_placeholder'], self._cms_placeholder)
+            self.assertEqual(post_call_kwargs['target_placeholder'], self._placeholder_1)
             self.assertEqual(post_call_kwargs['target_parent_id'], None)
 
     def test_pre_paste_placeholder(self):
@@ -446,9 +444,10 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
 
         data = {
             'plugin_id': placeholder_plugin.pk,
-            'placeholder_id': self._cms_placeholder.pk,
+            'placeholder_id': self._placeholder_1.pk,
             'move_a_copy': 'true',
-            'plugin_order[]': ['__COPY__'],
+            'target_language': 'en',
+            'target_position': 1,
         }
 
         with signal_tester(pre_placeholder_operation) as env:
@@ -470,7 +469,7 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
             self.assertEqual(plugin.placeholder, ref_placeholder)
             self.assertEqual(plugin.external_link, 'https://www.django-cms.org')
             self.assertEqual(call_kwargs['target_language'], 'en')
-            self.assertEqual(call_kwargs['target_placeholder'], self._cms_placeholder)
+            self.assertEqual(call_kwargs['target_placeholder'], self._placeholder_1)
 
     def test_post_paste_placeholder(self):
         user_settings = UserSettings.objects.create(
@@ -490,9 +489,10 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
 
         data = {
             'plugin_id': placeholder_plugin.pk,
-            'placeholder_id': self._cms_placeholder.pk,
+            'placeholder_id': self._placeholder_1.pk,
+            'target_language': 'en',
             'move_a_copy': 'true',
-            'plugin_order[]': ['__COPY__'],
+            'target_position': 1,
         }
 
         with signal_tester(pre_placeholder_operation, post_placeholder_operation) as env:
@@ -514,23 +514,21 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
             self.assertTrue(pre_call_kwargs['token'] == post_call_kwargs['token'])
             self.assertEqual(post_call_kwargs['origin'], '/en/')
             self.assertEqual(plugin.name, 'A Link')
-            self.assertEqual(plugin.placeholder, self._cms_placeholder)
+            self.assertEqual(plugin.placeholder, self._placeholder_1)
             self.assertEqual(plugin.external_link, 'https://www.django-cms.org')
             self.assertEqual(post_call_kwargs['target_language'], 'en')
-            self.assertEqual(post_call_kwargs['target_placeholder'], self._cms_placeholder)
+            self.assertEqual(post_call_kwargs['target_placeholder'], self._placeholder_1)
 
     def test_pre_add_plugins_from_placeholder(self):
         plugin = self._add_plugin()
-        endpoint = self.get_admin_url(Page, 'copy_plugins') + '?cms_path=/en/'
-
+        endpoint = self.get_copy_plugin_uri(plugin)
         source_placeholder = plugin.placeholder
-        target_placeholder = self._cms_page.placeholders.get(slot='right-column')
 
         data = {
             'source_language': 'en',
-            'source_placeholder_id': self._cms_placeholder.pk,
+            'source_placeholder_id': self._placeholder_1.pk,
             'target_language': 'de',
-            'target_placeholder_id': target_placeholder.pk,
+            'target_placeholder_id': self._placeholder_2.pk,
         }
 
         with signal_tester(pre_placeholder_operation) as env:
@@ -552,20 +550,18 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
             self.assertEqual(call_kwargs['source_language'], 'en')
             self.assertEqual(call_kwargs['source_placeholder'], source_placeholder)
             self.assertEqual(call_kwargs['target_language'], 'de')
-            self.assertEqual(call_kwargs['target_placeholder'], target_placeholder)
+            self.assertEqual(call_kwargs['target_placeholder'], self._placeholder_2)
 
     def test_post_add_plugins_from_placeholder(self):
         plugin = self._add_plugin()
-        endpoint = self.get_admin_url(Page, 'copy_plugins') + '?cms_path=/en/'
-
+        endpoint = self.get_copy_plugin_uri(plugin)
         source_placeholder = plugin.placeholder
-        target_placeholder = self._cms_page.placeholders.get(slot='right-column')
 
         data = {
             'source_language': 'en',
-            'source_placeholder_id': self._cms_placeholder.pk,
+            'source_placeholder_id': self._placeholder_1.pk,
             'target_language': 'de',
-            'target_placeholder_id': target_placeholder.pk,
+            'target_placeholder_id': self._placeholder_2.pk,
         }
 
         with signal_tester(pre_placeholder_operation, post_placeholder_operation) as env:
@@ -588,16 +584,16 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
             self.assertEqual(post_call_kwargs['origin'], '/en/')
             self.assertNotEqual(plugin, new_plugin)
             self.assertEqual(new_plugin.name, 'A Link')
-            self.assertEqual(new_plugin.placeholder, target_placeholder)
+            self.assertEqual(new_plugin.placeholder, self._placeholder_2)
             self.assertEqual(new_plugin.external_link, 'https://www.django-cms.org')
             self.assertEqual(post_call_kwargs['source_language'], 'en')
             self.assertEqual(post_call_kwargs['source_placeholder'], source_placeholder)
             self.assertEqual(post_call_kwargs['target_language'], 'de')
-            self.assertEqual(post_call_kwargs['target_placeholder'], target_placeholder)
+            self.assertEqual(post_call_kwargs['target_placeholder'], self._placeholder_2)
 
     def test_pre_clear_placeholder(self):
         plugin = self._add_plugin()
-        endpoint = self.get_clear_placeholder_url(self._cms_placeholder)
+        endpoint = self.get_clear_placeholder_url(self._placeholder_1)
 
         with signal_tester(pre_placeholder_operation) as env:
             with self.login_user_context(self._admin_user):
@@ -615,11 +611,11 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
             self.assertTrue('token' in call_kwargs)
             self.assertEqual(call_kwargs['origin'], '/en/')
             self.assertEqual(del_plugin.pk, plugin.pk)
-            self.assertEqual(call_kwargs['placeholder'], self._cms_placeholder)
+            self.assertEqual(call_kwargs['placeholder'], self._placeholder_1)
 
     def test_post_clear_placeholder(self):
         plugin = self._add_plugin()
-        endpoint = self.get_clear_placeholder_url(self._cms_placeholder)
+        endpoint = self.get_clear_placeholder_url(self._placeholder_1)
 
         with signal_tester(pre_placeholder_operation, post_placeholder_operation) as env:
             with self.login_user_context(self._admin_user):
@@ -640,4 +636,18 @@ class OperationSignalsTestCase(CMSTestCase, UnittestCompatMixin):
             self.assertTrue(pre_call_kwargs['token'] == post_call_kwargs['token'])
             self.assertEqual(post_call_kwargs['origin'], '/en/')
             self.assertEqual(del_plugin.pk, plugin.pk)
-            self.assertEqual(post_call_kwargs['placeholder'], self._cms_placeholder)
+            self.assertEqual(post_call_kwargs['placeholder'], self._placeholder_1)
+
+
+class AppPlaceholderTestCase(PagePlaceholderTestCase):
+
+    def setUp(self):
+        self._admin_user = self.get_superuser()
+        self._cms_page = self.create_homepage(
+            "home",
+            "nav_playground.html",
+            "en",
+            created_by=self._admin_user,
+        )
+        self._placeholder_1 = self._cms_page.get_placeholders("en").get(slot='body')
+        self._placeholder_2 = self._cms_page.get_placeholders("en").get(slot='right-column')

@@ -1,17 +1,16 @@
-# -*- coding: utf-8 -*-
-import tempfile
 import codecs
+import tempfile
 
 try:
     from cStringIO import StringIO
-except:
+except ImportError:
     from io import StringIO
 
 from django.core.management import call_command
 
+from cms.models import CMSPlugin, Page, Placeholder
 from cms.test_utils.fixtures.navextenders import NavextendersFixture
 from cms.test_utils.testcases import CMSTestCase
-from cms.models import Page, Placeholder, CMSPlugin
 
 
 class FixtureTestCase(NavextendersFixture, CMSTestCase):
@@ -29,6 +28,7 @@ class FixtureTestCase(NavextendersFixture, CMSTestCase):
         original_pages = Page.objects.count()
         original_plugins = CMSPlugin.objects.count()
         Page.objects.all().delete()
+        Placeholder.objects.all().delete()
         output.seek(0)
         with codecs.open(dump[1], 'w', 'utf-8') as dumpfile:
             dumpfile.write(output.read())
@@ -37,8 +37,8 @@ class FixtureTestCase(NavextendersFixture, CMSTestCase):
         self.assertEqual(0, Placeholder.objects.count())
         # Transaction disable, otherwise the connection it the test would be
         # isolated from the data loaded in the different command connection
-        call_command('loaddata', dump[1], commit=False, stdout=output)
-        self.assertEqual(10, Page.objects.count())
+        call_command('loaddata', dump[1], stdout=output)
+        self.assertEqual(5, Page.objects.count())
         self.assertEqual(original_pages, Page.objects.count())
         # Placeholder number may differ if signals does not correctly handle
         # load data command

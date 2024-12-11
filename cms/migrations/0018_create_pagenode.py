@@ -6,7 +6,7 @@ import django.contrib.auth.models
 from django.db import migrations, models
 import django.db.models.deletion
 
-# from . import IrreversibleMigration
+from . import IrreversibleMigration
 
 
 def get_descendants(root):
@@ -59,7 +59,7 @@ def create_page_nodes(apps, schema_editor):
             nodes_by_page[descendant.pk] = node
 
 
-class Migration(migrations.Migration):
+class Migration(IrreversibleMigration):
 
     dependencies = [
         ('sites', '0001_initial'),
@@ -83,7 +83,7 @@ class Migration(migrations.Migration):
                 'default_permissions': [],
             },
         ),
-        migrations.RunPython(create_page_nodes, migrations.RunPython.noop),
+        migrations.RunPython(create_page_nodes),
         migrations.AddField(
             model_name='page',
             name='node',

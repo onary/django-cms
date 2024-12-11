@@ -1,19 +1,14 @@
-# -*- coding: utf-8 -*-
-from __future__ import absolute_import, print_function, unicode_literals
-
 from collections import OrderedDict
 
-from cms.workaround import __version__
+import cms
 
 from .subcommands.base import SubcommandsCommand
 from .subcommands.check import CheckInstallation
-from .subcommands.list import ListCommand
-from .subcommands.moderator import ModeratorCommand
-from .subcommands.publisher_publish import PublishCommand
-from .subcommands.tree import FixTreeCommand
-from .subcommands.uninstall import UninstallCommand
 from .subcommands.copy import CopyCommand
 from .subcommands.delete_orphaned_plugins import DeleteOrphanedPluginsCommand
+from .subcommands.list import ListCommand
+from .subcommands.tree import FixTreeCommand
+from .subcommands.uninstall import UninstallCommand
 
 
 class Command(SubcommandsCommand):
@@ -24,8 +19,6 @@ class Command(SubcommandsCommand):
         ('delete-orphaned-plugins', DeleteOrphanedPluginsCommand),
         ('fix-tree', FixTreeCommand),
         ('list', ListCommand),
-        ('moderator', ModeratorCommand),
-        ('publisher-publish', PublishCommand),
         ('uninstall', UninstallCommand),
     ))
     missing_args_message = 'one of the available sub commands must be provided'
@@ -33,8 +26,8 @@ class Command(SubcommandsCommand):
     subcommand_dest = 'cmd'
 
     def get_version(self):
-        return __version__
+        return cms.__version__
 
     def add_arguments(self, parser):
         parser.add_argument('--version', action='version', version=self.get_version())
-        super(Command, self).add_arguments(parser)
+        super().add_arguments(parser)

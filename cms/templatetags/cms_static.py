@@ -1,9 +1,7 @@
-# -*- coding: utf-8 -*-
 from django import template
 from django.templatetags.static import StaticNode
 
 from cms.utils.urlutils import static_with_version
-
 
 register = template.Library()
 
@@ -28,5 +26,7 @@ def do_static_with_version(parser, token):
 class StaticWithVersionNode(StaticNode):
 
     def url(self, context):
-        url = super(StaticWithVersionNode, self).url(context)
-        return static_with_version(url)
+        path = self.path.resolve(context)
+        path_with_version = static_with_version(path)
+
+        return self.handle_simple(path_with_version)

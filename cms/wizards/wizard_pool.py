@@ -1,10 +1,8 @@
-# -*- coding: utf-8 -*-
+from django.apps import apps
+from django.utils.translation import gettext as _
 
-from django.utils.translation import ugettext as _
-
-from cms.utils.django_load import load
-
-from .wizard_base import Wizard
+from cms.wizards.helpers import get_entries, get_entry
+from cms.wizards.wizard_base import Wizard
 
 
 class AlreadyRegisteredException(Exception):
@@ -16,106 +14,84 @@ def entry_choices(user, page):
     Yields a list of wizard entries that the current user can use based on their
     permission to add instances of the underlying model objects.
     """
-    for entry in wizard_pool.get_entries():
+    for entry in get_entries():
         if entry.user_has_add_permission(user, page=page):
             yield (entry.id, entry.title)
 
 
-class WizardPool(object):
-    _entries = {}
-    _discovered = False
-
-    def __init__(self):
-        self._reset()
-
-    # PRIVATE METHODS -----------------
-
-    def _discover(self):
-        if not self._discovered:
-            load('cms_wizards')
-            self._discovered = True
-
-    def _clear(self):
-        """Simply empties the pool but does not clear the discovered flag."""
-        self._entries = {}
-
-    def _reset(self):
-        """Clears the wizard pool and clears the discovered flag."""
-        self._clear()
-        self._discovered = False
-
-    # PUBLIC METHODS ------------------
-
-    @property
-    def discovered(self):
-        """
-        A public getter for the private property _discovered. Note, there is no
-        public setter.
-        """
-        return self._discovered
+class WizardPool:
+    """
+    .. deprecated:: 4.0
+    """
 
     def is_registered(self, entry, **kwargs):
         """
-        Returns True if the provided entry is registered.
+        .. deprecated:: 4.0
 
-        NOTE: This method triggers pool discovery unless a «passive» kwarg
-        is set to True
+        Returns True if the provided entry is registered.
         """
-        passive = kwargs.get('passive', False)
-        if not passive:
-            self._discover()
-        return entry.id in self._entries
+        # TODO: Add deprecation warning
+        return entry.id in apps.get_app_config('cms').cms_extension.wizards
 
     def register(self, entry):
         """
-        Registers the provided «entry».
+        .. deprecated:: 4.0
 
-        Raises AlreadyRegisteredException if the entry is already registered.
+        You may notice from the example above that the last line in the sample code is::
+
+            wizard_pool.register(my_app_wizard)
+
+        This sort of thing should look very familiar, as a similar approach is used for
+        cms_apps, template tags and even Django's admin.
+
+        Calling the wizard pool's ``register`` method will register the provided wizard
+        into the pool, unless there is already a wizard of the same module and class
+        name. In this case, the register method will raise a
+        ``cms.wizards.wizard_pool.AlreadyRegisteredException``.
         """
-        assert isinstance(entry, Wizard), u"entry must be an instance of Wizard"
+        # TODO: Add deprecation warning
+        assert isinstance(entry, Wizard), "entry must be an instance of Wizard"
         if self.is_registered(entry, passive=True):
             model = entry.get_model()
             raise AlreadyRegisteredException(
-                _(u"A wizard has already been registered for model: %s") %
+                _("A wizard has already been registered for model: %s") %
                 model.__name__)
         else:
-            self._entries[entry.id] = entry
+            apps.get_app_config('cms').cms_extension.wizards[entry.id] = entry
 
     def unregister(self, entry):
         """
+        .. deprecated:: 4.0
+
         If «entry» is registered into the pool, remove it.
 
         Returns True if the entry was successfully registered, else False.
-
-        NOTE: This method triggers pool discovery.
         """
-        assert isinstance(entry, Wizard), u"entry must be an instance of Wizard"
-        if self.is_registered(entry, passive=True):
-            del self._entries[entry.id]
+        # TODO: Add deprecation warning
+        assert isinstance(entry, Wizard), "entry must be an instance of Wizard"
+        if self.is_registered(entry):
+            del apps.get_app_config('cms').cms_extension.wizards[entry.id]
             return True
         return False
 
     def get_entry(self, entry):
         """
+        .. deprecated:: 4.0 use :func:`cms.wizards.helpers.get_entry` instead
+
         Returns the wizard from the pool identified by «entry», which may be a
         Wizard instance or its "id" (which is the PK of its underlying
         content-type).
-
-        NOTE: This method triggers pool discovery.
         """
-        self._discover()
-        if isinstance(entry, Wizard):
-            entry = entry.id
-        return self._entries[entry]
+        # TODO: Deprecated warning
+        return get_entry(entry)
 
-    def get_entries(self):
-        """
-        Returns all entries in weight-order.
-
-        NOTE: This method triggers pool discovery.
-        """
-        self._discover()
-        return [value for (key, value) in sorted(
-            self._entries.items(), key=lambda e: getattr(e[1], 'weight'))]
 
 wizard_pool = WizardPool()
+"""
+..  warning::
+    .. deprecated:: 4.0
+
+    Using wizard_pool is deprecated. Use `cms.wizards.helper` functions instead.
+    Since django CMS version 4 wizards are registered with the cms using
+    :class:`cms.app_base.CMSAppConfig` in ``cms_config.py``.
+"""

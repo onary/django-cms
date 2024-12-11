@@ -1,6 +1,7 @@
-from cms.plugin_pool import plugin_pool
-from cms.plugin_base import CMSPluginBase, PluginMenuItem
 from django.conf import settings
+
+from cms.plugin_base import CMSPluginBase, PluginMenuItem
+from cms.plugin_pool import plugin_pool
 
 
 class EmptyPlugin(CMSPluginBase):
@@ -12,9 +13,10 @@ class EmptyPlugin(CMSPluginBase):
         return context
 
     def icon_src(self, instance):
-        return settings.STATIC_URL + u"cms/img/icons/plugins/image.png"
+        return settings.STATIC_URL + "cms/img/icons/plugins/image.png"
 
-    def get_extra_placeholder_menu_items(self, request, placeholder):
+    @classmethod
+    def get_extra_placeholder_menu_items(cls, request, placeholder):
         return [
             PluginMenuItem('Extra item - not usable', '/some/url/', 'any-data'),
             PluginMenuItem(
@@ -23,5 +25,6 @@ class EmptyPlugin(CMSPluginBase):
             ),
             PluginMenuItem('Other item - not usable', '/some/other/url/', 'any-data', action='ajax_add'),
         ]
+
 
 plugin_pool.register_plugin(EmptyPlugin)

@@ -18,7 +18,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RunPython(remove_pageurl_duplicates, migrations.RunPython.noop),
+        migrations.RunPython(remove_pageurl_duplicates),
         migrations.RemoveField(
             model_name="page",
             name="languages",

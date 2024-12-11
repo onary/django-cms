@@ -1,109 +1,95 @@
-# -*- coding: utf-8 -*-
 from django.conf import settings
-from django.contrib.auth import get_user_model
-from django.test import TestCase
 from django.test.utils import override_settings
 
 from cms.api import create_page
-from cms.models import UrlconfRevision
+from cms.models import Page, UrlconfRevision
 from cms.signals import urls_need_reloading
 from cms.test_utils.project.sampleapp.cms_apps import SampleApp
-from cms.test_utils.util.context_managers import apphooks, signal_tester
 from cms.test_utils.testcases import CMSTestCase
+from cms.test_utils.util.context_managers import apphooks, signal_tester
+
+overrides = {
+    'MIDDLEWARE': ['cms.middleware.utils.ApphookReloadMiddleware'] + settings.MIDDLEWARE,
+    'CMS_PERMISSION': False,
+}
 
 
-class SignalTests(TestCase):
-    def test_urls_need_reloading_signal_create(self):
+@override_settings(**overrides)
+class SignalTests(CMSTestCase):
+    def test_urls_need_reloading_signal_set_apphook(self):
+        superuser = self.get_superuser()
+
         with apphooks(SampleApp):
-            with signal_tester(urls_need_reloading) as env:
-                self.client.get('/')
-                self.assertEqual(env.call_count, 0)
-                create_page(
-                    "apphooked-page",
-                    "nav_playground.html",
-                    "en",
-                    published=True,
-                    apphook="SampleApp",
-                    apphook_namespace="test"
-                )
-                self.client.get('/')
-                self.assertEqual(env.call_count, 1)
+            with self.login_user_context(superuser):
+                with signal_tester(urls_need_reloading) as env:
+                    self.assertEqual(env.call_count, 0)
+                    cms_page = create_page(
+                        "apphooked-page",
+                        "nav_playground.html",
+                        "en",
+                    )
+                    redirect_to = self.get_pages_admin_list_uri()
+                    endpoint = self.get_admin_url(Page, 'advanced', cms_page.pk)
+                    current_revision, _ = UrlconfRevision.get_or_create_revision()
+                    page_data = {
+                        "reverse_id": "",
+                        "navigation_extenders": "",
+                        "application_urls": "SampleApp",
+                        "application_namespace": "sampleapp",
+                    }
+                    response = self.client.post(endpoint, page_data)
+                    self.assertRedirects(response, redirect_to)
+                    self.assertEqual(env.call_count, 1)
+                    new_revision, _ = UrlconfRevision.get_or_create_revision()
+                    self.assertNotEqual(current_revision, new_revision)
 
     def test_urls_need_reloading_signal_delete(self):
+        superuser = self.get_superuser()
+
         with apphooks(SampleApp):
-            with signal_tester(urls_need_reloading) as env:
-                self.client.get('/')
-                self.assertEqual(env.call_count, 0)
+            with self.login_user_context(superuser):
                 page = create_page(
                     "apphooked-page",
                     "nav_playground.html",
                     "en",
-                    published=True,
                     apphook="SampleApp",
                     apphook_namespace="test"
                 )
-                page.delete()
-                self.client.get('/')
-                self.assertEqual(env.call_count, 1)
+
+                with signal_tester(urls_need_reloading) as env:
+                    endpoint = self.get_admin_url(Page, 'delete', page.pk)
+                    current_revision, _ = UrlconfRevision.get_or_create_revision()
+                    self.assertEqual(env.call_count, 0)
+                    self.client.post(endpoint, {'post': 'yes'})
+                    self.assertEqual(env.call_count, 1)
+                    new_revision, _ = UrlconfRevision.get_or_create_revision()
+                    self.assertNotEqual(current_revision, new_revision)
 
     def test_urls_need_reloading_signal_change_slug(self):
+        superuser = self.get_superuser()
+        redirect_to = self.get_pages_admin_list_uri()
+
         with apphooks(SampleApp):
-            with signal_tester(urls_need_reloading) as env:
-                self.assertEqual(env.call_count, 0)
-                page = create_page(
-                    "apphooked-page",
-                    "nav_playground.html",
-                    "en",
-                    published=True,
-                    apphook="SampleApp",
-                    apphook_namespace="test"
-                )
-                self.client.get('/')
-                self.assertEqual(env.call_count, 1)
-                title = page.title_set.get(language="en")
-                title.slug += 'test'
-                title.save()
-                page.publish('en')
-                self.client.get('/')
-                self.assertEqual(env.call_count, 2)
-
-
-overrides = dict()
-overrides['MIDDLEWARE' if getattr(settings, 'MIDDLEWARE', None) else 'MIDDLEWARE_CLASSES'] = [
-    'cms.middleware.utils.ApphookReloadMiddleware'
-] + getattr(settings, 'MIDDLEWARE', getattr(settings, 'MIDDLEWARE_CLASSES', None))
-@override_settings(**overrides)
-class ApphooksReloadTests(CMSTestCase):
-    def test_urls_reloaded(self):
-        """
-        Tests that URLs are automatically reloaded when the ApphookReload
-        middleware is installed.
-        """
-        #
-        # Sets up an apphook'ed page, but does not yet publish it.
-        #
-        superuser = get_user_model().objects.create_superuser(
-            'admin', 'admin@admin.com', 'admin')
-        page = create_page("home", "nav_playground.html", "en",
-                           created_by=superuser)
-        page.publish('en')
-        app_page = create_page("app_page", "nav_playground.html", "en",
-                               created_by=superuser, parent=page,
-                               published=False, apphook="SampleApp")
-        self.client.get('/')  # Required to invoke the middleware
-        #
-        # Gets the current urls revision for testing against later.
-        #
-        current_revision, _ = UrlconfRevision.get_or_create_revision()
-
-        #
-        # Publishes the apphook. This is one of many ways to trigger the
-        # firing of the signal. The tests above test some of the other ways
-        # already.
-        #
-        app_page.publish('en')
-        self.client.get('/')  # Required to invoke the middleware
-
-        # And, this should result in a the updating of the UrlconfRevision
-        new_revision, _ = UrlconfRevision.get_or_create_revision()
-        self.assertNotEquals(current_revision, new_revision)
+            with self.login_user_context(superuser):
+                with signal_tester(urls_need_reloading) as env:
+                    current_revision, _ = UrlconfRevision.get_or_create_revision()
+                    self.assertEqual(env.call_count, 0)
+                    page = create_page(
+                        "apphooked-page",
+                        "nav_playground.html",
+                        "en",
+                        apphook="SampleApp",
+                        apphook_namespace="test"
+                    )
+                    # Change slug should trigger the signal
+                    endpoint = self.get_page_change_uri('en', page)
+                    page_data = {
+                        'title': 'apphooked-page',
+                        'slug': 'apphooked-page-2',
+                        'template': 'nav_playground.html'
+                    }
+                    response = self.client.post(endpoint, page_data)
+                    self.assertRedirects(response, redirect_to)
+                    self.assertEqual(env.call_count, 1)
+                    new_revision, _ = UrlconfRevision.get_or_create_revision()
+                    self.assertNotEqual(current_revision, new_revision)

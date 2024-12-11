@@ -4,13 +4,13 @@
 // general styling
 .cms {
     position: absolute;
-    top: $toolbar-debug-height;
+    top: 0;
     left: 0;
     z-index: z(base);
     width: 100%;
 }
 
-// other styles that might be used by components accross the components
+// other styles that might be used by components across the components
 .cms-prevent-scrolling {
     overflow: hidden !important;
     body {

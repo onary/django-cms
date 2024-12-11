@@ -6,6 +6,10 @@
 
 'use strict';
 
+process.env.NODE_ENV = 'test';
+process.env.CHROME_BIN = require('puppeteer').executablePath();
+
+
 var baseConf = require('./base.conf');
 var path = require('path');
 var fs = require('fs');
@@ -18,15 +22,16 @@ var webpackConfig = require('../../../webpack.config.js')({
     debug: true
 });
 
-webpackConfig.module.preLoaders = [
-    {
-        test: /cms\/js\/modules\/(?!jquery).*.js$/,
-        loader: 'istanbul-instrumenter',
+webpackConfig.module.rules.splice(1, 0, {
+    test: /cms\/js\/modules\/(?!jquery).*.js$/,
+    use: [{
+        loader: 'istanbul-instrumenter-loader',
         query: {
+            esModules: true,
             noCompact: true
         }
-    }
-];
+    }]
+});
 
 var files = ['*'];
 if (argv && argv.tests) {
@@ -35,16 +40,17 @@ if (argv && argv.tests) {
     console.log('Running tests for ' + files.join(', '));
 }
 
+var CMS_VERSION = fs.readFileSync('cms/__init__.py', { encoding: 'utf-8' })
+    .match(/__version__ = '(.*?)'/)[1];
+
 webpackConfig.plugins = [
     new webpack.DefinePlugin({
         __DEV__: 'false',
         __TEST__: 'true',
+        __CMS_VERSION__: JSON.stringify(CMS_VERSION),
         files: JSON.stringify(files)
     })
 ];
-
-var CMS_VERSION = fs.readFileSync('cms/__init__.py', { encoding: 'utf-8' })
-    .match(/__version__ = '(.*?)'/)[1];
 
 module.exports = function (config) {
     var useSauceLabs = function () {
@@ -53,7 +59,7 @@ module.exports = function (config) {
     };
 
     var browsers = {
-        PhantomJS: 'used for local testing'
+        ChromeHeadlessCI: 'used for local testing'
     };
 
     var settings = {
@@ -62,7 +68,7 @@ module.exports = function (config) {
 
         // frameworks to use
         // available frameworks: https://npmjs.org/browse/keyword/karma-adapter
-        frameworks: ['jasmine', 'fixture', 'phantomjs-shim'],
+        frameworks: ['jasmine', 'fixture'],
 
         // list of files / patterns to load in the browser
         files: [
@@ -85,6 +91,7 @@ module.exports = function (config) {
         exclude: [
             'cms/static/cms/js/dist/*.js',
             'cms/static/cms/js/*.js',
+            'cms/static/cms/js/modules/*.js',
             'cms/static/cms/js/modules/jquery.*.js'
         ],
 
@@ -121,7 +128,6 @@ module.exports = function (config) {
         webpack: {
             cache: true,
             devtool: 'inline-source-map',
-            debug: true,
             resolve: webpackConfig.resolve,
             plugins: webpackConfig.plugins,
             module: webpackConfig.module
@@ -143,6 +149,13 @@ module.exports = function (config) {
 
         // start these browsers
         browsers: Object.keys(browsers),
+
+        customLaunchers: {
+            ChromeHeadlessCI: {
+                base: 'ChromeHeadless',
+                flags: ['--window-size=1280,1080']
+            }
+        },
 
         concurrency: Infinity,
 

@@ -1,9 +1,7 @@
 // polyfills
-require('./polyfills/function.prototype.bind.js');
-require('./libs/pep');
+import './polyfills/function.prototype.bind.js';
+import './libs/pep';
 
-var CMS = require('./modules/cms.base');
+import PageTree from './modules/cms.pagetree';
 
-window.CMS = CMS;
-
-CMS.PageTree = require('./modules/cms.pagetree');
+window.CMS.PageTree = PageTree;

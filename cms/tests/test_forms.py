@@ -1,22 +1,32 @@
-# -*- coding: utf-8 -*-
+from html import unescape
+
 from django.contrib.auth import get_user_model
 from django.contrib.sites.models import Site
 from django.core.cache import cache
+from django.utils.translation import override as force_language
 
 from cms.admin import forms
-from cms.admin.forms import (PagePermissionInlineAdminForm,
-                             ViewRestrictionInlineAdminForm, GlobalPagePermissionAdminForm,
-                             PageUserGroupForm)
-from cms.api import create_page, assign_user_to_page
-from cms.forms.fields import PageSelectFormField, SuperLazyIterator
-
-from cms.models import ACCESS_PAGE, ACCESS_PAGE_AND_CHILDREN
-
-from cms.forms.utils import update_site_and_page_choices, get_site_choices, get_page_choices
-from cms.forms.widgets import ApplicationConfigSelect
-from cms.test_utils.testcases import (
-    CMSTestCase, URL_CMS_PAGE_PERMISSION_CHANGE, URL_CMS_PAGE_PERMISSIONS
+from cms.admin.forms import (
+    GlobalPagePermissionAdminForm,
+    PagePermissionInlineAdminForm,
+    PageUserGroupForm,
+    ViewRestrictionInlineAdminForm,
 )
+from cms.api import assign_user_to_page, create_page, create_page_content
+from cms.forms.fields import PageSelectFormField
+from cms.forms.utils import (
+    get_page_choices,
+    get_site_choices,
+    update_site_and_page_choices,
+)
+from cms.forms.widgets import ApplicationConfigSelect
+from cms.models import ACCESS_PAGE, ACCESS_PAGE_AND_CHILDREN
+from cms.test_utils.testcases import (
+    URL_CMS_PAGE_ADVANCED_CHANGE,
+    URL_CMS_PAGE_PERMISSIONS,
+    CMSTestCase,
+)
+from cms.utils import get_current_site
 
 
 class Mock_PageSelectFormField(PageSelectFormField):
@@ -39,6 +49,54 @@ class FormsTestCase(CMSTestCase):
     def test_get_page_choices(self):
         result = get_page_choices()
         self.assertEqual(result, [('', '----')])
+
+    def test_page_choices_draft_only(self):
+        """
+        The page choices should always use draft ids
+        """
+        site = get_current_site()
+        pages = [
+            create_page("0001", "nav_playground.html", "en"),
+            create_page("0002", "nav_playground.html", "en"),
+            create_page("0003", "nav_playground.html", "en"),
+            create_page("0004", "nav_playground.html", "en"),
+        ]
+
+        expected = [
+            ('', '----'),
+            (site.name, [
+                (page.pk, page.get_title('en', fallback=False))
+                for page in pages
+            ])
+        ]
+        self.assertSequenceEqual(get_page_choices('en'), expected)
+
+    def test_get_page_choices_with_multiple_translations(self):
+        site = get_current_site()
+        pages = [
+            create_page("0001", "nav_playground.html", "en"),
+            create_page("0002", "nav_playground.html", "en"),
+            create_page("0003", "nav_playground.html", "en"),
+            create_page("0004", "nav_playground.html", "en"),
+        ]
+        languages = ['de', 'fr']
+
+        for page in pages:
+            for language in languages:
+                title = page.get_title('en')
+                create_page_content(language, title, page=page)
+
+        for language in ['en'] + languages:
+            expected = [
+                ('', '----'),
+                (site.name, [
+                    (page.pk, page.get_title(language, fallback=False))
+                    for page in pages
+                ])
+            ]
+
+            with force_language(language):
+                self.assertSequenceEqual(get_page_choices(), expected)
 
     def test_get_site_choices_without_moderator(self):
         result = get_site_choices()
@@ -66,7 +124,7 @@ class FormsTestCase(CMSTestCase):
         raised = False
         try:
             fake_field = Mock_PageSelectFormField(required=True)
-            data_list = (0, None)  #(site_id, page_id) dsite-id is not used
+            data_list = (0, None)  # (site_id, page_id) dsite-id is not used
             fake_field.compress(data_list)
             self.fail('compress function didn\'t raise!')
         except forms.ValidationError:
@@ -75,7 +133,7 @@ class FormsTestCase(CMSTestCase):
 
     def test_compress_function_returns_none_when_not_required(self):
         fake_field = Mock_PageSelectFormField(required=False)
-        data_list = (0, None)  #(site_id, page_id) dsite-id is not used
+        data_list = (0, None)  # (site_id, page_id) dsite-id is not used
         result = fake_field.compress(data_list)
         self.assertEqual(result, None)
 
@@ -102,7 +160,7 @@ class FormsTestCase(CMSTestCase):
             home_page = create_page("home", "nav_playground.html", "en", created_by=user_super)
             # The actual test
             fake_field = Mock_PageSelectFormField()
-            data_list = (0, home_page.pk)  #(site_id, page_id) dsite-id is not used
+            data_list = (0, home_page.pk)  # (site_id, page_id) dsite-id is not used
             result = fake_field.compress(data_list)
             self.assertEqual(home_page, result)
 
@@ -118,7 +176,7 @@ class FormsTestCase(CMSTestCase):
                             'nav_playground.html', 'en',
                             site=site, parent=page1)
         # enforce the choices to be casted to a list
-        site_choices, page_choices = [list(bit) for bit in update_site_and_page_choices('en')]
+        site_choices, page_choices = (list(bit) for bit in update_site_and_page_choices('en'))
         self.assertEqual(page_choices, [
             ('', '----'),
             (site.name, [
@@ -131,7 +189,7 @@ class FormsTestCase(CMSTestCase):
         self.assertEqual(site_choices, [(site.pk, site.name)])
 
     def test_app_config_select_escaping(self):
-        class FakeAppConfig(object):
+        class FakeAppConfig:
             def __init__(self, pk, config):
                 self.pk = pk
                 self.config = config
@@ -139,7 +197,7 @@ class FormsTestCase(CMSTestCase):
             def __str__(self):
                 return self.config
 
-        class FakeApp(object):
+        class FakeApp:
             def __init__(self, name, configs=()):
                 self.name = name
                 self.configs = configs
@@ -176,18 +234,6 @@ class FormsTestCase(CMSTestCase):
                         '\\u003B)\\u003B\\u0026lt\\u003B/script\\u0026gt'
                         '\\u003B' in output)
 
-    def test_superlazy_iterator_behaves_properly_for_sites(self):
-        normal_result = get_site_choices()
-        lazy_result = SuperLazyIterator(get_site_choices)
-
-        self.assertEqual(normal_result, list(lazy_result))
-
-    def test_superlazy_iterator_behaves_properly_for_pages(self):
-        normal_result = get_page_choices()
-        lazy_result = SuperLazyIterator(get_page_choices)
-
-        self.assertEqual(normal_result, list(lazy_result))
-
 
 class PermissionFormTestCase(CMSTestCase):
 
@@ -199,7 +245,7 @@ class PermissionFormTestCase(CMSTestCase):
                             can_change=True)
 
         with self.login_user_context(self.get_superuser()):
-            response = self.client.get(URL_CMS_PAGE_PERMISSION_CHANGE % page.pk)
+            response = self.client.get(URL_CMS_PAGE_ADVANCED_CHANGE % page.pk)
             self.assertEqual(response.status_code, 200)
             response = self.client.get(URL_CMS_PAGE_PERMISSIONS % page.pk)
             self.assertEqual(response.status_code, 200)
@@ -230,10 +276,10 @@ class PermissionFormTestCase(CMSTestCase):
             }
             form = PagePermissionInlineAdminForm(data=data, files=None)
 
-            error_message = ("<li>Users can&#39;t create a page without permissions "
+            error_message = ("<li>Users can\'t create a page without permissions "
                              "to change the created page. Edit permissions required.</li>")
             self.assertFalse(form.is_valid())
-            self.assertTrue(error_message in str(form.errors))
+            self.assertTrue(error_message in unescape(str(form.errors)))
             data = {
                 'page': page.pk,
                 'grant_on': ACCESS_PAGE,
@@ -245,8 +291,8 @@ class PermissionFormTestCase(CMSTestCase):
             form = PagePermissionInlineAdminForm(data=data, files=None)
             self.assertFalse(form.is_valid())
             self.assertTrue('<li>Add page permission requires also access to children, or '
-                            'descendants, otherwise added page can&#39;t be changed by its '
-                            'creator.</li>' in str(form.errors))
+                            'descendants, otherwise added page can\'t be changed by its '
+                            'creator.</li>' in unescape(str(form.errors)))
 
     def test_inlines(self):
         user = self._create_user("randomuser", is_staff=True, add_default_permissions=True)

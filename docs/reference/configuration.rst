@@ -1,8 +1,8 @@
 .. _configuration:
 
-#############
-Configuration
-#############
+######################
+Configuring django CMS
+######################
 
 django CMS has a number of settings to configure its behaviour. These should
 be available in your ``settings.py`` file.
@@ -21,7 +21,7 @@ should come *after* ``cms``.
 .. _middleware:
 
 **********************************
-The ``MIDDLEWARE_CLASSES`` setting
+The ``MIDDLEWARE`` setting
 **********************************
 
 .. _ApphookReloadMiddleware:
@@ -29,15 +29,11 @@ The ``MIDDLEWARE_CLASSES`` setting
 ``cms.middleware.utils.ApphookReloadMiddleware``
 ================================================
 
-Adding ``ApphookReloadMiddleware`` to the ``MIDDLEWARE_CLASSES`` tuple will enable automatic server
-restarts when changes are made to apphook configurations. It should be placed as near to the top of
-the classes as possible.
+Adding ``ApphookReloadMiddleware`` to the ``MIDDLEWARE`` tuple will enable automatic server restarts when changes are made to apphook configurations. It should be placed as near to the top of the classes as possible.
 
 .. note::
 
-   This has been tested and works in many production environments and deployment configurations,
-   but we haven't been able to test it with all possible set-ups. Please file an issue if you
-   discover one where it fails.
+   This has been tested and works in many production environments and deployment configurations, but we haven't been able to test it with all possible set-ups. Please file an issue if you discover one where it fails.
 
 
 ************************
@@ -69,9 +65,9 @@ Additionally, the application in which the model is defined **must** be loaded b
     only at the beginning of a project, before the database is created.
 
 
-*****************
-Required Settings
-*****************
+*******************
+Basic Customisation
+*******************
 
 ..  setting:: CMS_TEMPLATES
 
@@ -79,7 +75,7 @@ CMS_TEMPLATES
 =============
 
 default
-    ``()`` (Not a valid setting!)
+    ``()`` (Valid setting for headless mode only!)
 
 A list of templates you can select for a page.
 
@@ -108,10 +104,6 @@ Example::
     provided within ``cms/templates/cms``. You are strongly advised not to use
     ``cms`` as a directory name for your own project templates.
 
-
-*******************
-Basic Customisation
-*******************
 
 ..  setting:: CMS_TEMPLATE_INHERITANCE
 
@@ -155,8 +147,7 @@ python module, by creating a ``__init__.py`` file in the templates directory.
 The file contains a single ``TEMPLATES`` dictionary with the list of templates
 as keys and template names as values::::
 
-    # -*- coding: utf-8 -*-
-    from django.utils.translation import ugettext_lazy as _
+    from django.utils.translation import gettext_lazy as _
     TEMPLATES = {
         'col_two.html': _('Two columns'),
         'col_three.html': _('Three columns'),
@@ -172,6 +163,23 @@ for translation.
     Currently **filesystem** and **app_directory** loader schemas are tested and
     supported.
 
+
+.. setting:: CMS_PLACEHOLDERS
+
+CMS_PLACEHOLDERS
+================
+
+default
+    ``(('', ('content',), _("Single placeholder")),)``
+
+A list of placeholders that can be added to a page. The first element of the
+tuple is the name of the placeholder configuration. The second element is a
+tuple of placeholder names. The third element is the verbose description of the
+placeholder configuration which will be shown in the user interface.
+
+The ``CMS_PLACEHOLDERS`` setting is used to define the placeholders in headless
+mode if and only if no CMS templates are defined in :setting:`CMS_TEMPLATES` or
+:setting:`CMS_TEMPLATES_DIR`.
 
 ..  setting:: CMS_PLACEHOLDER_CONF
 
@@ -190,7 +198,7 @@ Example::
         None: {
             "plugins": ['TextPlugin'],
             'excluded_plugins': ['InheritPlugin'],
-        }
+        },
         'content': {
             'plugins': ['TextPlugin', 'PicturePlugin'],
             'text_only_plugins': ['LinkPlugin'],
@@ -241,10 +249,10 @@ plugins in a granular fashion, as shown above with ``base.html content``.
 
 Configuration is retrieved in the following order:
 
-* CMS_PLACEHOLDER_CONF['template placeholder']
-* CMS_PLACEHOLDER_CONF['placeholder']
-* CMS_PLACEHOLDER_CONF['template']
-* CMS_PLACEHOLDER_CONF[None]
+#. CMS_PLACEHOLDER_CONF['template placeholder']
+#. CMS_PLACEHOLDER_CONF['placeholder']
+#. CMS_PLACEHOLDER_CONF['template']
+#. CMS_PLACEHOLDER_CONF[None]
 
 The first ``CMS_PLACEHOLDER_CONF`` key that matches for the required configuration attribute
 is used.
@@ -394,7 +402,7 @@ default
 
 A list of plugin context processors. Plugin context processors are callables
 that modify all plugins' context *before* rendering. See
-:doc:`/how_to/custom_plugins` for more information.
+:doc:`/how_to/10-custom_plugins` for more information.
 
 
 ..  setting:: CMS_PLUGIN_PROCESSORS
@@ -406,7 +414,7 @@ default
     ``[]``
 
 A list of plugin processors. Plugin processors are callables that modify all
-plugins' output *after* rendering. See :doc:`/how_to/custom_plugins`
+plugins' output *after* rendering. See :doc:`/how_to/10-custom_plugins`
 for more information.
 
 ..  setting:: CMS_APPHOOKS
@@ -437,7 +445,7 @@ Example::
 .. _i18n_l10n_reference:
 
 *****************************************************
-Internationalisation and localisation (I18N and L10N) 
+Internationalisation and localisation (I18N and L10N)
 *****************************************************
 
 CMS_LANGUAGES
@@ -461,7 +469,7 @@ Example::
                 'fallbacks': ['de', 'fr'],
                 'public': True,
                 'hide_untranslated': True,
-                'redirect_on_fallback':False,
+                'redirect_on_fallback': False,
             },
             {
                 'code': 'de',
@@ -485,7 +493,7 @@ Example::
         ],
         'default': {
             'fallbacks': ['en', 'de', 'fr'],
-            'redirect_on_fallback':True,
+            'redirect_on_fallback': True,
             'public': True,
             'hide_untranslated': False,
         }
@@ -573,7 +581,7 @@ default
 hide_untranslated
 -----------------
 
-Hides untranslated pages in menus. 
+Hides untranslated pages in menus.
 
 When applied to the ``default`` directive, if ``False``, all pages in menus will be listed in all languages, including those
 that don't yet have content in a particular language. If ``True``, untranslated pages will be hidden.
@@ -612,7 +620,7 @@ Unicode support for automated slugs
 If your site has languages which use non-ASCII character sets, :setting:`CMS_UNIHANDECODE_HOST` and
 :setting:`CMS_UNIHANDECODE_VERSION` will allow it to automate slug generation for those languages too.
 
-Support for this is provided by the unihandecode.js project. 
+Support for this is provided by the unihandecode.js project.
 
 
 ..  setting:: CMS_UNIHANDECODE_HOST
@@ -786,7 +794,7 @@ CMS_REQUEST_IP_RESOLVER
 =======================
 
 default
-    'cms.utils.request_ip_resolvers.default_request_ip_resolver'
+    '`cms.utils.request_ip_resolvers.default_request_ip_resolver`'
 
 This setting is used system-wide to provide a consistent and plug-able means
 of extracting a client IP address from the HTTP request. The default
@@ -987,7 +995,7 @@ default
     ``None``
 
 If defined, specifies the list of toolbar modifiers to be used to populate the
-toolbar as import paths. Otherwise, all available toolbars from both the CMS and
+toolbar, as import paths. Otherwise, all available toolbars from both the CMS and
 the third-party apps will be loaded.
 
 Example::
@@ -1012,8 +1020,38 @@ default
     ``True``
 
 This setting controls if anonymous users can see the CMS toolbar with
-a login form when ``?edit`` is appended to a URL. The default behaviour
+a login form when ``?toolbar_on`` is appended to a URL. The default behaviour
 is to show the toolbar to anonymous users.
+
+.. setting:: CMS_TOOLBAR_ANONYMOUS_ON
+
+
+CMS_TOOLBAR_URL__ENABLE
+=======================
+
+default
+    ``"toolbar_on``
+
+This setting controls how users can activate the CMS toolbar by appending a query
+string to the url. The default setting lets ``?toolbar_on`` activate the toolbar.
+
+.. note::
+
+    This replaces the ``?edit`` query string of django CMS 3.x
+
+.. setting:: CMS_TOOLBAR_URL__ENABLE
+
+
+CMS_TOOLBAR_URL__DISABLE
+=======================
+
+default
+    ``"toolbar_off``
+
+This setting controls how users can deactivate the CMS toolbar by appending a query
+string to the url. The default setting lets ``?toolbar_off`` deactivate the toolbar.
+
+.. setting:: CMS_TOOLBAR_URL__DISABLE
 
 
 CMS_TOOLBAR_HIDE
@@ -1029,8 +1067,6 @@ rendered by a django CMS view).
 When this is set to ``True``, all other pages will no longer display the toolbar. This includes pages with apphooks
 applied to them, as they are handled by the other application's views, and not django CMS's.
 
-
-.. versionchanged:: 3.2.1: CMS_APP_NAME has been removed as it's no longer required.
 
 CMS_DEFAULT_X_FRAME_OPTIONS
 ===========================
@@ -1049,23 +1085,6 @@ This should be an integer preferably taken from the ``cms.constants`` e.g.
 
 .. _CMS_TOOLBAR_SIMPLE_STRUCTURE_MODE:
 
-CMS_TOOLBAR_SIMPLE_STRUCTURE_MODE
-=================================
-
-default:
-    ``True``
-
-The new structure board operates by default in "simple" mode. The older mode used absolute
-positioning. Setting this attribute to ``False`` will allow the absolute positioning used in
-versions prior to 3.2. This setting will be removed in 3.3.
-
-
-Example::
-
-    CMS_TOOLBAR_SIMPLE_STRUCTURE_MODE = False
-
-
-..  setting:: CMS_PAGE_WIZARD_DEFAULT_TEMPLATE
 
 CMS_PAGE_WIZARD_DEFAULT_TEMPLATE
 ================================
@@ -1116,3 +1135,70 @@ when the "Content" field is filled in. There should be no need to change it,
 unless you **don't** use ``djangocms-text-ckeditor`` in your project **and**
 your custom plugin defined in :setting:`CMS_PAGE_WIZARD_CONTENT_PLUGIN` have a
 body field **different** than ``body``.
+
+.. setting:: CMS_ENDPOINT_LIVE_URL_QUERYSTRING_PARAM_ENABLED
+
+CMS_ENDPOINT_LIVE_URL_QUERYSTRING_PARAM_ENABLED
+===============================================
+
+default
+    ``False``
+
+.. versionadded:: 4.0
+
+    Setting to enable the appending of a PageContents live url to its preview and
+    edit endpoints as a querystring parameter. This is disabled by default.
+
+.. setting:: CMS_ENDPOINT_LIVE_URL_QUERYSTRING_PARAM
+
+CMS_ENDPOINT_LIVE_URL_QUERYSTRING_PARAM
+===============================================
+
+default
+    ``live-url``
+
+.. versionadded:: 4.0
+
+    Setting to configure the query string parameter name used for the live-url of a
+    PageContent edit/preview endpoint.
+
+
+.. setting:: CMS_REDIRECT_PRESERVE_QUERY_PARAMS
+
+CMS_REDIRECT_PRESERVE_QUERY_PARAMS
+==================================
+
+default
+    ``False``
+
+This indicates to the CMS that redirects should preserve the query parameters.
+
+
+..  setting:: CMS_REDIRECT_TO_LOWERCASE_SLUG
+
+CMS_REDIRECT_TO_LOWERCASE_SLUG
+==============================
+
+default
+    ``False``
+
+This indicates to the CMS that it should redirect requests with an non-lowercase
+slug to its lowercase version if no page with that slug is found.
+
+
+CMS_CONFIRM_VERSION4
+====================
+
+default
+    ``False``
+
+.. versionadded:: 4.1
+
+    This setting **has to be set** to ``True`` for your project to run on django CMS
+    version 4.1 or later.
+
+The reason is that accidentally running a migration command on an existing installation
+of django CMS v3.x **may corrupt the database**. Upgrading from version 3.x to 4.x is
+not an automatic process.
+
+.. setting:: CMS_CONFIRM_VERSION4

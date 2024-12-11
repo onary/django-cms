@@ -1,19 +1,18 @@
-# -*- coding: utf-8 -*-
 from django.apps import apps
-from django.db import models
 from django.conf import settings
 from django.contrib.auth.models import Group, UserManager
 from django.contrib.sites.models import Site
 from django.core.exceptions import ImproperlyConfigured, ValidationError
+from django.db import models
+from django.db.models import Q
 from django.utils.encoding import force_str
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
-from cms.multidb import RoutingForeignKey
 from cms.models import Page
-from cms.models.managers import (PagePermissionManager,
-                                 GlobalPagePermissionManager)
-from cms.utils.helpers import reversion_register
-
+from cms.models.managers import (
+    GlobalPagePermissionManager,
+    PagePermissionManager,
+)
 
 # Cannot use contrib.auth.get_user_model() at compile time.
 user_app_name, user_model_name = settings.AUTH_USER_MODEL.rsplit('.', 1)
@@ -31,10 +30,20 @@ if User is None:
 
 # NOTE: those are not just numbers!! we will do binary AND on them,
 # so pay attention when adding/changing them, or MASKs..
+
+#: Access to the page itself
 ACCESS_PAGE = 1
-ACCESS_CHILDREN = 2  # just immediate children (1 level)
-ACCESS_PAGE_AND_CHILDREN = 3  # just immediate children (1 level)
+
+#: Access to immediate children (1 level)
+ACCESS_CHILDREN = 2
+
+#: Access to page itself and immediate children (1 level)
+ACCESS_PAGE_AND_CHILDREN = 3
+
+#: Access to all children (first level and also their children)
 ACCESS_DESCENDANTS = 4
+
+#: Access to page itself and all children (first level and also their children)
 ACCESS_PAGE_AND_DESCENDANTS = 5
 
 # binary masks for ACCESS permissions
@@ -56,16 +65,30 @@ class AbstractPagePermission(models.Model):
     """
 
     # who:
-    user = RoutingForeignKey(settings.AUTH_USER_MODEL, verbose_name=_("user"), blank=True, null=True, on_delete=models.SET_NULL)
-    group = RoutingForeignKey(Group, verbose_name=_("group"), blank=True, null=True, on_delete=models.SET_NULL)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        verbose_name=_("user"),
+        blank=True,
+        null=True,
+    )
+    group = models.ForeignKey(
+        Group,
+        on_delete=models.CASCADE,
+        verbose_name=_("group"),
+        blank=True,
+        null=True,
+    )
 
     # what:
     can_change = models.BooleanField(_("can edit"), default=True)
     can_add = models.BooleanField(_("can add"), default=True)
     can_delete = models.BooleanField(_("can delete"), default=True)
-    can_change_advanced_settings = models.BooleanField(_("can change advanced settings"), default=False)
     can_publish = models.BooleanField(_("can publish"), default=True)
-    can_change_permissions = models.BooleanField(_("can change permissions"), default=False, help_text=_("on page level"))
+    can_change_advanced_settings = models.BooleanField(_("can change advanced settings"), default=False)
+    can_change_permissions = models.BooleanField(
+        _("can change permissions"), default=False, help_text=_("on page level")
+    )
     can_move_page = models.BooleanField(_("can move"), default=True)
     can_view = models.BooleanField(_("view restricted"), default=False, help_text=_("frontend view restriction"))
 
@@ -74,7 +97,7 @@ class AbstractPagePermission(models.Model):
         app_label = 'cms'
 
     def clean(self):
-        super(AbstractPagePermission, self).clean()
+        super().clean()
 
         if not self.user and not self.group:
             raise ValidationError(_('Please select user or group.'))
@@ -123,7 +146,7 @@ class AbstractPagePermission(models.Model):
         if not self.user and not self.group:
             # don't allow `empty` objects
             return
-        return super(AbstractPagePermission, self).save(*args, **kwargs)
+        return super().save(*args, **kwargs)
 
     def get_configured_actions(self):
         actions = [action for action in self.get_permissions_by_action()
@@ -159,12 +182,11 @@ class AbstractPagePermission(models.Model):
             'change_page_permissions': ['can_change', 'can_change_permissions'],
             'delete_page': ['can_change', 'can_delete'],
             'delete_page_translation': ['can_change', 'can_delete'],
-            'move_page': ['can_change', 'can_move_page'],
             'publish_page': ['can_change', 'can_publish'],
+            'move_page': ['can_change', 'can_move_page'],
             'view_page': ['can_view'],
         }
         return permissions_by_action
-
 
 
 class GlobalPagePermission(AbstractPagePermission):
@@ -193,12 +215,43 @@ class GlobalPagePermission(AbstractPagePermission):
         return "%s :: GLOBAL" % self.audience
 
 
+class PermissionTuple(tuple):
+    def contains(self, path: str, steplen: int = Page.steplen) -> bool:
+        grant_on, perm_path = self
+        if grant_on == ACCESS_PAGE:
+            return path == perm_path
+        elif grant_on == ACCESS_CHILDREN:
+            return path.startswith(perm_path) and len(path) == len(perm_path) + steplen
+        elif grant_on == ACCESS_DESCENDANTS:
+            return path.startswith(perm_path) and len(path) > len(perm_path)
+        elif grant_on == ACCESS_PAGE_AND_DESCENDANTS:
+            return path.startswith(perm_path)
+        elif grant_on == ACCESS_PAGE_AND_CHILDREN:
+            return path.startswith(perm_path) and len(path) <= len(perm_path) + steplen
+        return False
+
+    def allow_list(self, filter: str = "", steplen: int = Page.steplen) -> Q:
+        if filter != "":
+            filter = f"{filter}__"
+        grant_on, path = self
+        if grant_on == ACCESS_PAGE:
+            return Q(**{f"{filter}path": path})
+        elif grant_on == ACCESS_CHILDREN:
+            return Q(**{f"{filter}path__startswith": path, f"{filter}__path__length": len(path) + steplen})
+        elif grant_on == ACCESS_DESCENDANTS:
+            return Q(**{f"{filter}path__startswith": path, f"{filter}__path__length__gt": len(path)})
+        elif grant_on == ACCESS_PAGE_AND_DESCENDANTS:
+            return Q(**{f"{filter}path__startswith": path})
+        elif grant_on == ACCESS_PAGE_AND_CHILDREN:
+            return Q(**{f"{filter}path__startswith": path, f"{filter}__path__length__lte": len(path) + steplen})
+        return Q()
+
 
 class PagePermission(AbstractPagePermission):
-    """Page permissions for single page
+    """Page permissions for a single page
     """
     grant_on = models.IntegerField(_("Grant on"), choices=ACCESS_CHOICES, default=ACCESS_PAGE_AND_DESCENDANTS)
-    page = models.ForeignKey(Page, null=True, blank=True, verbose_name=_("page"), on_delete=models.SET_NULL)
+    page = models.ForeignKey(Page, on_delete=models.CASCADE, null=True, blank=True, verbose_name=_("page"))
 
     objects = PagePermissionManager()
 
@@ -209,37 +262,47 @@ class PagePermission(AbstractPagePermission):
 
     def __str__(self):
         page = self.page_id and force_str(self.page) or "None"
-        return "%s :: %s has: %s" % (page, self.audience, force_str(self.get_grant_on_display()))
+        return f"{page} :: {self.audience} has: {force_str(self.get_grant_on_display())}"
 
     def clean(self):
-        super(PagePermission, self).clean()
+        super().clean()
 
         if self.can_add and self.grant_on == ACCESS_PAGE:
             # this is a misconfiguration - user can add/move page to current
-            # page but after he does this, he will not have permissions to
+            # page, but after he does this, he will not have permissions to
             # access this page anymore, so avoid this.
             message = _("Add page permission requires also access to children, "
                         "or descendants, otherwise added page can't be changed "
                         "by its creator.")
             raise ValidationError(message)
 
+    def get_page_permission_tuple(self):
+        return PermissionTuple((self.grant_on, self.page.path))
+
     def get_page_ids(self):
+        import warnings
+
+        from cms.utils.compat.warnings import RemovedInDjangoCMS43Warning
+        warnings.warn("get_page_ids is deprecated and will be removed in django CMS 4.3, "
+                      "use get_page_permission_tuple instead", RemovedInDjangoCMS43Warning, stacklevel=2)
+
+        return self._get_page_ids()
+
+    def _get_page_ids(self):
         if self.grant_on & MASK_PAGE:
             yield self.page_id
 
         if self.grant_on & MASK_CHILDREN:
-            children = self.page.get_children().values_list('id', flat=True)
+            children = self.page.get_child_pages().values_list('pk', flat=True)
 
-            for child in children:
-                yield child
+            yield from children
         elif self.grant_on & MASK_DESCENDANTS:
-            if self.page.has_cached_descendants():
+            if self.page._has_cached_hierarchy():
                 descendants = (page.pk for page in self.page.get_cached_descendants())
             else:
-                descendants = self.page.get_descendants().values_list('id', flat=True).iterator()
+                descendants = self.page.get_descendant_pages().values_list('pk', flat=True).iterator()
 
-            for descendant in descendants:
-                yield descendant
+            yield from descendants
 
 
 class PageUserManager(UserManager):
@@ -249,7 +312,7 @@ class PageUserManager(UserManager):
 class PageUser(User):
     """Cms specific user data, required for permission system
     """
-    created_by = RoutingForeignKey(settings.AUTH_USER_MODEL, related_name="created_users", on_delete=models.CASCADE)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="created_users")
 
     objects = PageUserManager()
 
@@ -262,12 +325,13 @@ class PageUser(User):
 class PageUserGroup(Group):
     """Cms specific group data, required for permission system
     """
-    created_by = RoutingForeignKey(settings.AUTH_USER_MODEL, related_name="created_usergroups", on_delete=models.CASCADE)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="created_usergroups"
+    )
 
     class Meta:
         verbose_name = _('User group (page)')
         verbose_name_plural = _('User groups (page)')
         app_label = 'cms'
-
-
-reversion_register(PagePermission)

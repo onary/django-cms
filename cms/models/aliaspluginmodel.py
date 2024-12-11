@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from django.db import models
 from django.db.models import Q
 from django.utils.encoding import force_str
@@ -6,18 +5,39 @@ from django.utils.encoding import force_str
 from cms.models import CMSPlugin, Placeholder
 
 
-
 class AliasPluginModel(CMSPlugin):
-    cmsplugin_ptr = models.OneToOneField(CMSPlugin, related_name='cms_aliasplugin', parent_link=True, on_delete=models.CASCADE)
-    plugin = models.ForeignKey(CMSPlugin, editable=False, related_name="alias_reference", null=True, on_delete=models.SET_NULL)
-    alias_placeholder = models.ForeignKey(Placeholder, editable=False, related_name="alias_placeholder", null=True, on_delete=models.SET_NULL)
+    """
+    AliasPlugin is deprecated,
+    and it will be removed;
+    please use the package djangocms-alias instead
+    """
+    cmsplugin_ptr = models.OneToOneField(
+        CMSPlugin,
+        on_delete=models.CASCADE,
+        related_name='cms_aliasplugin',
+        parent_link=True,
+    )
+    plugin = models.ForeignKey(
+        CMSPlugin,
+        on_delete=models.CASCADE,
+        editable=False,
+        related_name='alias_reference',
+        null=True,
+    )
+    alias_placeholder = models.ForeignKey(
+        Placeholder,
+        on_delete=models.CASCADE,
+        editable=False,
+        related_name='alias_placeholder',
+        null=True,
+    )
 
     class Meta:
         app_label = 'cms'
 
     def __str__(self):
         if self.plugin_id:
-            return "(%s) %s" % (force_str(self.plugin.get_plugin_name()), self.plugin.get_plugin_instance()[0])
+            return f"({force_str(self.plugin.get_plugin_name())}) {self.plugin.get_plugin_instance()[0]}"
         else:
             return force_str(self.alias_placeholder.get_label())
 
@@ -39,8 +59,6 @@ class AliasPluginModel(CMSPlugin):
             placeholder_id=placeholder_id,
         )
         plugins = plugins.filter(
-            Q(plugin=self) |
-            Q(plugin__placeholder=self.placeholder_id) |
-            Q(alias_placeholder=self.placeholder_id)
+            Q(plugin=self) | Q(plugin__placeholder=self.placeholder_id) | Q(alias_placeholder=self.placeholder_id)
         )
         return plugins.exists()
