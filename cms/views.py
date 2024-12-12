@@ -292,7 +292,10 @@ def render_object_endpoint(request, content_type_id, object_id, require_editable
     try:
         if issubclass(model, PageContent):
             # An apphook might be attached to a PageContent object
-            content_type_obj = model.admin_manager.select_related("page").get(pk=object_id)
+            if settings.CMS_DB_NAME:
+                content_type_obj = model._base_manager.using(settings.CMS_DB_NAME).admin_manager.select_related("page").get(pk=object_id)
+            else:
+                content_type_obj = model.admin_manager.select_related("page").get(pk=object_id)
             request.current_page = content_type_obj.page
             if (
                 content_type_obj.page.application_urls and  # noqa: W504
@@ -312,7 +315,10 @@ def render_object_endpoint(request, content_type_id, object_id, require_editable
                     # Apphook does not provide a view for its "root", show warning message
                     return _handle_no_apphook(request)
         else:
-            content_type_obj = content_type.get_object_for_this_type(pk=object_id)
+            if settings.CMS_DB_NAME:
+                content_type_obj = content_type.model_class()._base_manager.using(settings.CMS_DB_NAME).get(pk=object_id)
+            else:
+                content_type_obj = content_type.get_object_for_this_type(pk=object_id)
     except ObjectDoesNotExist as err:
         raise Http404 from err
 
