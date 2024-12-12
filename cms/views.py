@@ -260,7 +260,10 @@ def render_object_structure(request, content_type_id, object_id):
         raise Http404 from err
 
     try:
-        content_type_obj = content_type.get_object_for_this_type(pk=object_id)
+        if settings.CMS_DB_NAME:
+            content_type_obj = content_type.model_class()._base_manager.using(settings.CMS_DB_NAME).get(pk=object_id)
+        else:
+            content_type_obj = content_type.get_object_for_this_type(pk=object_id)
     except ObjectDoesNotExist as err:
         raise Http404 from err
 
