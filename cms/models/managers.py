@@ -12,6 +12,7 @@ from cms.constants import ROOT_USER_LEVEL
 from cms.exceptions import NoPermissionsException
 from cms.models.query import PageNodeQuerySet, PageQuerySet
 from cms.utils.i18n import get_fallback_languages
+from django.conf import settings
 
 
 class PageManager(models.Manager):
@@ -137,7 +138,10 @@ class ContentAdminQuerySet(models.QuerySet):
 
 class ContentAdminManager(WithUserMixin, models.Manager):
     def get_queryset(self):
-        return ContentAdminQuerySet(self.model, using=self._db)
+        using = self._db
+        if settings.CMS_DB_NAME:
+            using = settings.CMS_DB_NAME
+        return ContentAdminQuerySet(self.model, using=using)
 
     def current_content(self, **kwargs):
         """Syntactic sugar: admin_manager.current_content()"""
