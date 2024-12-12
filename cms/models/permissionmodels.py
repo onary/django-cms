@@ -14,8 +14,6 @@ from cms.models.managers import (
     PagePermissionManager,
 )
 
-from cms.multidb import RoutingForeignKey
-
 # Cannot use contrib.auth.get_user_model() at compile time.
 user_app_name, user_model_name = settings.AUTH_USER_MODEL.rsplit('.', 1)
 User = None
@@ -67,14 +65,14 @@ class AbstractPagePermission(models.Model):
     """
 
     # who:
-    user = RoutingForeignKey(
+    user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         verbose_name=_("user"),
         blank=True,
         null=True,
     )
-    group = RoutingForeignKey(
+    group = models.ForeignKey(
         Group,
         on_delete=models.CASCADE,
         verbose_name=_("group"),
@@ -319,7 +317,7 @@ class PageUserManager(UserManager):
 class PageUser(User):
     """Cms specific user data, required for permission system
     """
-    created_by = RoutingForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="created_users")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="created_users")
 
     objects = PageUserManager()
 
@@ -332,7 +330,7 @@ class PageUser(User):
 class PageUserGroup(Group):
     """Cms specific group data, required for permission system
     """
-    created_by = RoutingForeignKey(
+    created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="created_usergroups"

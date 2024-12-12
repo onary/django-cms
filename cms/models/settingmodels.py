@@ -3,10 +3,9 @@ from django.db import models
 from django.utils.encoding import force_str
 from django.utils.translation import gettext_lazy as _
 
-from cms.multidb import RoutingOneToOneField
 
 class UserSettings(models.Model):
-    user = RoutingOneToOneField(
+    user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         editable=False,
